@@ -219,15 +219,12 @@ std::optional<evmc::address> ecrecover(
     std::copy_n(sp1_T1, 16, sp1_Q);
     syscall_secp256k1_add(sp1_Q, sp1_T2);
 
-    const auto Qx = sp1_to_uint256(&sp1_Q[0]);
-    const auto Qy = sp1_to_uint256(&sp1_Q[8]);
-    if (Qx == 0 || Qy == 0)
+    if (is_zero(sp1_Q))
         return std::nullopt;
 
     // Third part: hash it.
     uint8_t serialized[64];
-    intx::be::unsafe::store(&serialized[0], Qx);
-    intx::be::unsafe::store(&serialized[32], Qy);
+    sp1_point_to_bytes(serialized, sp1_Q);
 
     const auto hashed = ethash::keccak256(serialized, sizeof(serialized));
     evmc::address ret{};
