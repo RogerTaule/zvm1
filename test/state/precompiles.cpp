@@ -454,6 +454,34 @@ void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
     }
     syscall_bn254_add(r, p);
 }
+
+void sp1_bn_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
+{
+    while (true)
+    {
+        const auto [reduced_c, less_than] = subc(c, evmmax::bn254::Curve::ORDER);
+        if (less_than) [[likely]]
+            break;
+        c = reduced_c;
+    }
+
+    std::fill_n(r, 16, 0);
+    const auto bit_width = sizeof(c) * 8 - intx::clz(c);
+
+    if (bit_width == 0) [[unlikely]]
+        return;
+
+    if (is_zero(p)) [[unlikely]]
+        return;
+
+    std::copy_n(p, 16, r);  // r = p
+    for (auto i = bit_width - 1; i != 0; --i)
+    {
+        syscall_bn254_double(r);
+        if ((c & (uint256{1} << (i - 1))) != 0)
+            syscall_bn254_add(r, p);
+    }
+}
 }
 
 ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* output,
@@ -510,10 +538,18 @@ ExecutionResult ecmul_execute(const uint8_t* input, size_t input_size, uint8_t* 
 
     if (validate(p))
     {
+#ifdef SP1
+        sp1_AffinePoint sp1_p;
+        sp1_point_from_bytes(sp1_p, input_buffer);
+        sp1_AffinePoint sp1_r;
+        sp1_bn_mul(sp1_r, sp1_p, c);
+        sp1_point_to_bytes(output, sp1_r);
+#else
         const auto res = evmmax::bn254::mul(p, c);
         const std::span<uint8_t, 64> output_span{output, 64};
         res.to_bytes(output_span);
-        return {EVMC_SUCCESS, output_span.size()};
+#endif
+        return {EVMC_SUCCESS, 64};
     }
     else
         return {EVMC_PRECOMPILE_FAILURE, 0};
