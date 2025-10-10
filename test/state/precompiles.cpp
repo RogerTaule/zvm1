@@ -23,6 +23,8 @@
 
 #include <silkworm/core/execution/precompile.hpp>
 
+#include <sp1_syscalls.hpp>
+
 #ifdef EVMONE_PRECOMPILES_GMP
 #include "precompiles_gmp.hpp"
 #endif
@@ -432,6 +434,28 @@ ExecutionResult expmod_execute_gmp(
 }
 #endif
 
+namespace
+{
+static_assert(sizeof(sp1_AffinePoint) == 64, "sp1_AffinePoint must be 64 bytes");
+using intx::uint256;
+void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
+{
+    if (is_zero(p)) [[unlikely]]
+        return;
+    if (is_zero(r)) [[unlikely]]
+    {
+        std::copy_n(p, 16, r);
+        return;
+    }
+    if (eq(r, p)) [[unlikely]]
+    {
+        syscall_bn254_double(r);
+        return;
+    }
+    syscall_bn254_add(r, p);
+}
+}
+
 ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
@@ -450,10 +474,19 @@ ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* 
 
     if (validate(p) && validate(q))
     {
+#ifdef SP1
+        sp1_AffinePoint sp1_p;
+        sp1_AffinePoint sp1_q;
+        sp1_point_from_bytes(sp1_p, input_buffer);
+        sp1_point_from_bytes(sp1_q, input_buffer + 64);
+        sp1_bn_add(sp1_p, sp1_q);
+        sp1_point_to_bytes(output, sp1_p);
+#else
         const auto res = evmmax::ecc::add(p, q);
         const std::span<uint8_t, 64> output_span{output, 64};
         res.to_bytes(output_span);
-        return {EVMC_SUCCESS, output_span.size()};
+#endif
+        return {EVMC_SUCCESS, 64};
     }
     else
         return {EVMC_PRECOMPILE_FAILURE, 0};

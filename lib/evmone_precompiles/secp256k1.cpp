@@ -55,8 +55,6 @@ evmc::address to_address(const AffinePoint& pt) noexcept
 #ifdef SP1
 namespace
 {
-using sp1_AffinePoint = uint32_t[16];
-
 constexpr auto Gx = G.x.value();
 constexpr auto Gy = G.y.value();
 
