@@ -6,6 +6,8 @@
 #include <evmmax/evmmax.hpp>
 #include <bit>
 
+#include <sp1_syscalls.hpp>
+
 using namespace intx;
 
 namespace
@@ -131,6 +133,32 @@ void modexp_impl(std::span<const uint8_t> base_bytes, std::span<const uint8_t> e
 
     trunc(std::span{output, mod_bytes.size()}, result);
 }
+
+void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp,
+    std::span<const uint8_t> mod_bytes, uint8_t* output) noexcept
+{
+    const auto base = load<uint256>(base_bytes);
+    const auto mod = load<uint256>(mod_bytes);
+
+    // SP1 uses 32-bit limbs in little-endian order so we can just cast the pointers.
+    const auto sp1_base = reinterpret_cast<const uint32_t*>(&base);
+    const auto sp1_mod = reinterpret_cast<const uint32_t*>(&mod);
+
+    uint256 ret = 1;
+    const auto sp1_ret = reinterpret_cast<uint32_t*>(&ret);
+    for (const auto e : exp)
+    {
+        for (size_t i = 8; i != 0; --i)
+        {
+            sys_bigint(sp1_ret, 0, sp1_ret, sp1_ret, sp1_mod);
+            const auto bit = e & (1 << (i - 1));
+            if (bit != 0)
+                sys_bigint(sp1_ret, 0, sp1_ret, sp1_base, sp1_mod);
+        }
+    }
+
+    trunc(std::span{output, mod_bytes.size()}, ret);
+}
 }  // namespace
 
 namespace evmone::crypto
@@ -144,6 +172,14 @@ void modexp(std::span<const uint8_t> base, std::span<const uint8_t> exp,
 
     const auto it = std::ranges::find_if(exp, [](auto x) { return x != 0; });
     exp = std::span{it, exp.end()};
+
+#ifdef SP1
+    if (const auto size = std::max(mod.size(), base.size()); size <= 32)
+    {
+        modexp_sp1(base, exp, mod, output);
+        return;
+    }
+#endif
 
     if (const auto size = std::max(mod.size(), base.size()); size <= 16)
         modexp_impl<16>(base, exp, mod, output);
