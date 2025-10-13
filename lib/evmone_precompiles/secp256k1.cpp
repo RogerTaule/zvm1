@@ -105,7 +105,7 @@ void sp1_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
     for (auto i = bit_width - 1; i != 0; --i)
     {
         syscall_secp256k1_double(r);
-        if ((c & (uint256{1} << (i - 1))) != 0)
+        if (evmmax::ecc::test_bit(c, i - 1))
             syscall_secp256k1_add(r, p);
     }
 }
