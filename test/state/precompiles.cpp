@@ -447,11 +447,26 @@ void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
         std::copy_n(p, 16, r);
         return;
     }
-    if (eq(r, p)) [[unlikely]]
+
+    const auto& rx = *(const uint256*)&r[0];
+    const auto& ry = *(const uint256*)&r[8];
+    const auto& px = *(const uint256*)&p[0];
+    const auto& py = *(const uint256*)&p[8];
+
+    if (rx == px) [[unlikely]]
     {
-        syscall_bn254_double(r);
-        return;
+        if (ry == py)
+        {
+            syscall_bn254_double(r);
+            return;
+        }
+        if (ry == evmmax::bn254::Curve::FIELD_PRIME - py)
+        {
+            std::fill_n(r, 16, 0);
+            return;
+        }
     }
+
     syscall_bn254_add(r, p);
 }
 
@@ -482,7 +497,7 @@ void sp1_bn_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
             syscall_bn254_add(r, p);
     }
 }
-}
+}  // namespace
 
 ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
