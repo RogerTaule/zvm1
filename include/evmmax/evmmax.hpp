@@ -4,6 +4,7 @@
 #pragma once
 
 #include <intx/intx.hpp>
+#include <sp1_syscalls.hpp>
 
 namespace evmmax
 {
@@ -57,8 +58,8 @@ private:
 public:
     constexpr explicit ModArith(const UintT& modulus) noexcept
       : mod{modulus},
-        m_r_squared{compute_r_squared(modulus)},
-        m_mod_inv{compute_mod_inv(modulus[0])}
+        m_r_squared{BN ? 1 : compute_r_squared(modulus)},
+        m_mod_inv{BN ? 0 : compute_mod_inv(modulus[0])}
     {
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
@@ -68,13 +69,25 @@ public:
     ///
     /// This is done by using Montgomery multiplication mul(x, R²)
     /// what gives aR²R⁻¹ % mod = aR % mod.
-    constexpr UintT to_mont(const UintT& x) const noexcept { return mul(x, m_r_squared); }
+    constexpr UintT to_mont(const UintT& x) const noexcept
+    {
+        if constexpr (BN)
+            return x;
+        else
+            return mul(x, m_r_squared);
+    }
 
     /// Converts a value in Montgomery form back to normal value.
     ///
     /// Given the x is the Montgomery form x = aR, the conversion is done by using
     /// Montgomery multiplication mul(x, 1) what gives aRR⁻¹ % mod = a % mod.
-    constexpr UintT from_mont(const UintT& x) const noexcept { return mul(x, 1); }
+    constexpr UintT from_mont(const UintT& x) const noexcept
+    {
+        if constexpr (BN)
+            return x;
+        else
+            return mul(x, 1);
+    }
 
     /// Performs a Montgomery modular multiplication.
     ///
@@ -88,8 +101,10 @@ public:
 
         if constexpr (BN)
         {
-            if (!std::is_constant_evaluated())
-                std::puts("m");
+            UintT res = x;
+            syscall_bn254_fp_mulmod(
+                reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
+            return res;
         }
 
         // Coarsely Integrated Operand Scanning (CIOS) Method
@@ -135,8 +150,10 @@ public:
 
         if constexpr (BN)
         {
-            if (!std::is_constant_evaluated())
-                std::puts("a");
+            UintT res = x;
+            syscall_bn254_fp_addmod(
+                reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
+            return res;
         }
 
         const auto s = addc(x, y);  // TODO: cannot overflow if modulus is sparse (e.g. 255 bits).
@@ -153,8 +170,10 @@ public:
 
         if constexpr (BN)
         {
-            if (!std::is_constant_evaluated())
-                std::puts("s");
+            UintT res = x;
+            syscall_bn254_fp_submod(
+                reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
+            return res;
         }
 
         const auto d = subc(x, y);
