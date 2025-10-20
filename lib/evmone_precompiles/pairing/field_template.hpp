@@ -5,6 +5,13 @@
 
 #include <array>
 
+#include <sp1_syscalls.hpp>
+
+namespace evmmax::bn254
+{
+struct Fq2Config;
+}
+
 namespace evmmax::ecc
 {
 /// Implements computations over base field defined by prime number.
@@ -106,6 +113,14 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator+(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            syscall_bn254_fp2_addmod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
+            return res;
+        }
+
         auto res = e1.coeffs;
         for (size_t i = 0; i < DEGREE; ++i)
             res[i] = res[i] + e2.coeffs[i];
@@ -114,6 +129,14 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            syscall_bn254_fp2_submod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
+            return res;
+        }
+
         auto res = e1.coeffs;
         for (size_t i = 0; i < DEGREE; ++i)
             res[i] = res[i] - e2.coeffs[i];
@@ -122,6 +145,14 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e) noexcept
     {
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            ExtFieldElem res = {};
+            syscall_bn254_fp2_submod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint32_t*>(e.coeffs.data()));
+            return res;
+        }
+
         CoeffArrT ret;
         for (size_t i = 0; i < DEGREE; ++i)
             ret[i] = -e.coeffs[i];
@@ -130,6 +161,14 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator*(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            syscall_bn254_fp2_mulmod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
+            return res;
+        }
+
         return multiply(e1, e2);
     }
 
