@@ -3,8 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#ifdef SP1
+#include <sp1_syscalls.hpp">
+#endif
+
 #include <intx/intx.hpp>
-#include <sp1_syscalls.hpp>
+
+
+// #include <sp1_syscalls.hpp>
 
 namespace evmmax
 {
@@ -99,6 +105,7 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 
+#ifdef SP1
         if constexpr (BN)
         {
             UintT res = x;
@@ -106,6 +113,8 @@ public:
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
         }
+#endif
+
 
         // Coarsely Integrated Operand Scanning (CIOS) Method
         // Based on 2.3.2 from
@@ -147,6 +156,7 @@ public:
     {
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
+#ifdef SP1
 
         if constexpr (BN)
         {
@@ -155,6 +165,7 @@ public:
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
         }
+#endif
 
         const auto s = addc(x, y);  // TODO: cannot overflow if modulus is sparse (e.g. 255 bits).
         const auto d = subc(s.value, mod);
@@ -167,6 +178,7 @@ public:
     {
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
+#ifdef SP1
 
         if constexpr (BN)
         {
@@ -175,6 +187,7 @@ public:
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
         }
+#endif
 
         const auto d = subc(x, y);
         const auto s = d.value + mod;

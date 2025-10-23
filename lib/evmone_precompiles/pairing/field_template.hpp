@@ -5,7 +5,9 @@
 
 #include <array>
 
+#ifdef SP1
 #include <sp1_syscalls.hpp>
+#endif
 
 namespace evmmax::bn254
 {
@@ -113,6 +115,8 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator+(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
+#ifdef SP1
+
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
@@ -120,6 +124,7 @@ struct ExtFieldElem
                 reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
             return res;
         }
+#endif
 
         auto res = e1.coeffs;
         for (size_t i = 0; i < DEGREE; ++i)
@@ -129,6 +134,8 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
+#ifdef SP1
+
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
@@ -136,6 +143,7 @@ struct ExtFieldElem
                 reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
             return res;
         }
+#endif
 
         auto res = e1.coeffs;
         for (size_t i = 0; i < DEGREE; ++i)
@@ -145,6 +153,8 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e) noexcept
     {
+#ifdef SP1
+
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             ExtFieldElem res = {};
@@ -152,6 +162,7 @@ struct ExtFieldElem
                 reinterpret_cast<const uint32_t*>(e.coeffs.data()));
             return res;
         }
+#endif
 
         CoeffArrT ret;
         for (size_t i = 0; i < DEGREE; ++i)
@@ -161,6 +172,8 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator*(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
+#ifdef SP1
+
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
@@ -168,6 +181,7 @@ struct ExtFieldElem
                 reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
             return res;
         }
+#endif
 
         return multiply(e1, e2);
     }

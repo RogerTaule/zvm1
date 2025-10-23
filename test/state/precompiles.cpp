@@ -23,7 +23,10 @@
 
 #include <silkworm/core/execution/precompile.hpp>
 
+#ifdef SP1
 #include <sp1_syscalls.hpp>
+#endif
+
 
 #ifdef EVMONE_PRECOMPILES_GMP
 #include "precompiles_gmp.hpp"
@@ -436,8 +439,9 @@ ExecutionResult expmod_execute_gmp(
 
 namespace
 {
-static_assert(sizeof(sp1_AffinePoint) == 64, "sp1_AffinePoint must be 64 bytes");
 using intx::uint256;
+#ifdef SP1
+static_assert(sizeof(sp1_AffinePoint) == 64, "sp1_AffinePoint must be 64 bytes");
 void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
 {
     if (is_zero(p)) [[unlikely]]
@@ -497,8 +501,8 @@ void sp1_bn_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
             syscall_bn254_add(r, p);
     }
 }
+#endif
 }  // namespace
-
 ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
@@ -618,32 +622,32 @@ ExecutionResult blake2bf_execute(const uint8_t* input, [[maybe_unused]] size_t i
     uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
 {
     // static_assert(std::endian::native == std::endian::little,
-        // "blake2bf only works correctly on little-endian architectures");
-        // assert(input_size >= 213);
-        // assert(output_size >= 64);
+    // "blake2bf only works correctly on little-endian architectures");
+    // assert(input_size >= 213);
+    // assert(output_size >= 64);
 
-        const auto rounds = intx::be::unsafe::load<uint32_t>(input);
-        input += sizeof(rounds);
+    const auto rounds = intx::be::unsafe::load<uint32_t>(input);
+    input += sizeof(rounds);
 
-        uint64_t h[8];
-        std::memcpy(h, input, sizeof(h));
-        input += sizeof(h);
+    uint64_t h[8];
+    std::memcpy(h, input, sizeof(h));
+    input += sizeof(h);
 
-        uint64_t m[16];
-        std::memcpy(m, input, sizeof(m));
-        input += sizeof(m);
+    uint64_t m[16];
+    std::memcpy(m, input, sizeof(m));
+    input += sizeof(m);
 
-        uint64_t t[2];
-        std::memcpy(t, input, sizeof(t));
-        input += sizeof(t);
+    uint64_t t[2];
+    std::memcpy(t, input, sizeof(t));
+    input += sizeof(t);
 
-        const auto f = *input;
-        if (f != 0 && f != 1) [[unlikely]]
-            return {EVMC_PRECOMPILE_FAILURE, 0};
+    const auto f = *input;
+    if (f != 0 && f != 1) [[unlikely]]
+        return {EVMC_PRECOMPILE_FAILURE, 0};
 
-        crypto::blake2b_compress(rounds, h, m, t, f != 0);
-        std::memcpy(output, h, sizeof(h));
-        return {EVMC_SUCCESS, sizeof(h)};
+    crypto::blake2b_compress(rounds, h, m, t, f != 0);
+    std::memcpy(output, h, sizeof(h));
+    return {EVMC_SUCCESS, sizeof(h)};
 }
 
 ExecutionResult point_evaluation_execute(const uint8_t* input, size_t input_size, uint8_t* output,
@@ -775,8 +779,8 @@ static ExecutionResult p256verify_execute(
     return {EVMC_SUCCESS, 0};
 }
 
-static ExecutionResult silkworm_ecrecover_execute(const uint8_t* input, size_t input_size, uint8_t* output,
-    [[maybe_unused]] size_t output_size) noexcept
+static ExecutionResult silkworm_ecrecover_execute(const uint8_t* input, size_t input_size,
+    uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
 {
     auto res = silkworm::precompile::ecrec_run({input, input_size});
     std::memcpy(output, res->data(), res->size());

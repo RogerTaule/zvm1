@@ -6,7 +6,9 @@
 #include <evmmax/evmmax.hpp>
 #include <bit>
 
+#ifdef SP1
 #include <sp1_syscalls.hpp>
+#endif
 
 using namespace intx;
 
@@ -134,9 +136,11 @@ void modexp_impl(std::span<const uint8_t> base_bytes, std::span<const uint8_t> e
     trunc(std::span{output, mod_bytes.size()}, result);
 }
 
+#ifdef SP1
 void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp,
     std::span<const uint8_t> mod_bytes, uint8_t* output) noexcept
 {
+
     const auto base = load<uint256>(base_bytes);
     const auto mod = load<uint256>(mod_bytes);
 
@@ -159,6 +163,7 @@ void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> ex
 
     trunc(std::span{output, mod_bytes.size()}, ret);
 }
+#endif
 }  // namespace
 
 namespace evmone::crypto
