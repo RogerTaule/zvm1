@@ -4,7 +4,7 @@
 #pragma once
 
 #ifdef SP1
-#include <sp1_syscalls.hpp">
+#include <sp1_syscalls.hpp>
 #endif
 
 #include <intx/intx.hpp>
