@@ -204,10 +204,36 @@ inline void smod(StackTop stack) noexcept
 
 inline void addmod(StackTop stack) noexcept
 {
-    const auto& x = stack.pop();
-    const auto& y = stack.pop();
+    auto& x = stack.pop();
+    auto& y = stack.pop();
     auto& m = stack.top();
-    m = m != 0 ? intx::addmod(x, y, m) : 0;
+
+    if (m == 0) [[unlikely]]
+    {
+        m = 0;
+        return;
+    }
+
+#ifdef SP1
+    auto [sum, carry] = intx::addc(x, y);
+    x = m;
+    m = sum;
+    y = 1;
+    syscall_uint256_mulmod(reinterpret_cast<uint32_t*>(&m), reinterpret_cast<const uint32_t*>(&y));
+
+    if (carry)
+    {
+        auto s = m;
+        m = uint256{1} << 128;
+        y = m;
+        syscall_uint256_mulmod(reinterpret_cast<uint32_t*>(&m), reinterpret_cast<const uint32_t*>(&y));
+        m += s;
+        if (m >= x)  // TODO: untested.
+            m -= x;
+    }
+#else
+      m = intx::addmod(x, y, m);
+#endif
 }
 
 inline void mulmod(StackTop stack) noexcept
