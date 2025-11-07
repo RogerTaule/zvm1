@@ -10,6 +10,10 @@
 #include "instructions_xmacro.hpp"
 #include <evmone_precompiles/keccak.hpp>
 
+#ifdef SP1
+#include <sp1_syscalls.hpp>
+#endif
+
 namespace evmone
 {
 using code_iterator = const uint8_t*;
@@ -208,10 +212,26 @@ inline void addmod(StackTop stack) noexcept
 
 inline void mulmod(StackTop stack) noexcept
 {
-    const auto& x = stack[0];
+    auto& x = stack[0];
     const auto& y = stack[1];
     auto& m = stack[2];
-    m = m != 0 ? intx::mulmod(x, y, m) : 0;
+
+    if (m == 0) [[unlikely]]
+    {
+        m = 0;
+        return;
+    }
+
+#if SP1
+    // SP1 syscall expects &x and &(y || m).
+    // Because the EVM stack grows downwards, we start with m, y, x.
+    // So swap to get x, y, m.
+    std::swap(x, m);
+    // The result will be in the &m position (now containing x) as expected by EVM.
+    syscall_uint256_mulmod(reinterpret_cast<uint32_t*>(&m), reinterpret_cast<const uint32_t*>(&y));
+#else
+    m = intx::mulmod(x, y, m);
+#endif
 }
 
 inline Result exp(StackTop stack, int64_t gas_left, ExecutionState& state) noexcept
