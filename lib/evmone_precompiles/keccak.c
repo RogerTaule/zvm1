@@ -4,8 +4,10 @@
 
 #include "keccak.h"
 
-#ifdef SP1
+#ifdef SP1TURBO
 void syscall_keccak_permute(uint64_t (*state)[25]);
+#elif defined(SP1)
+void syscall_keccak_permute(uint64_t state[25]);
 #endif
 
 // Provide __has_attribute macro if not defined.
@@ -297,7 +299,7 @@ static void keccakf1600_generic(uint64_t state[25])
 
 /// The pointer to the best Keccak-f[1600] function implementation,
 /// selected during runtime initialization.
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
 #define DEFAULT_keccakf1600 syscall_keccak_permute
 #else
 #define DEFAULT_keccakf1600 keccakf1600_generic

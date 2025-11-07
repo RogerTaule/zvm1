@@ -440,7 +440,12 @@ ExecutionResult expmod_execute_gmp(
 namespace
 {
 using intx::uint256;
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
+#ifdef SP1TURBO
+constexpr size_t SP1_BN_POINT_SIZE = 16;
+#else
+constexpr size_t SP1_BN_POINT_SIZE = 8;
+#endif
 static_assert(sizeof(sp1_AffinePoint) == 64, "sp1_AffinePoint must be 64 bytes");
 void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
 {
@@ -448,14 +453,14 @@ void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
         return;
     if (is_zero(r)) [[unlikely]]
     {
-        std::copy_n(p, 16, r);
+        std::copy_n(p, SP1_BN_POINT_SIZE, r);
         return;
     }
 
     const auto& rx = *(const uint256*)&r[0];
-    const auto& ry = *(const uint256*)&r[8];
+    const auto& ry = *(const uint256*)&r[SP1_BN_POINT_SIZE / 2];
     const auto& px = *(const uint256*)&p[0];
-    const auto& py = *(const uint256*)&p[8];
+    const auto& py = *(const uint256*)&p[SP1_BN_POINT_SIZE / 2];
 
     if (rx == px) [[unlikely]]
     {
@@ -466,7 +471,7 @@ void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
         }
         if (ry == evmmax::bn254::Curve::FIELD_PRIME - py)
         {
-            std::fill_n(r, 16, 0);
+            std::fill_n(r, SP1_BN_POINT_SIZE, 0);
             return;
         }
     }
@@ -484,7 +489,7 @@ void sp1_bn_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
         c = reduced_c;
     }
 
-    std::fill_n(r, 16, 0);
+    std::fill_n(r, SP1_BN_POINT_SIZE, 0);
     const auto bit_width = sizeof(c) * 8 - intx::clz(c);
 
     if (bit_width == 0) [[unlikely]]
@@ -493,7 +498,7 @@ void sp1_bn_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
     if (is_zero(p)) [[unlikely]]
         return;
 
-    std::copy_n(p, 16, r);  // r = p
+    std::copy_n(p, SP1_BN_POINT_SIZE, r);  // r = p
     for (auto i = bit_width - 1; i != 0; --i)
     {
         syscall_bn254_double(r);
@@ -521,7 +526,7 @@ ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* 
 
     if (validate(p) && validate(q))
     {
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
         sp1_AffinePoint sp1_p;
         sp1_AffinePoint sp1_q;
         sp1_point_from_bytes(sp1_p, input_buffer);
@@ -557,7 +562,7 @@ ExecutionResult ecmul_execute(const uint8_t* input, size_t input_size, uint8_t* 
 
     if (validate(p))
     {
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
         sp1_AffinePoint sp1_p;
         sp1_point_from_bytes(sp1_p, input_buffer);
         sp1_AffinePoint sp1_r;

@@ -115,13 +115,20 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator+(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
-#ifdef SP1
-
+#ifdef SP1TURBO
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
             syscall_bn254_fp2_addmod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
                 reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
+            return res;
+        }
+#elif defined(SP1)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            syscall_bn254_fp2_addmod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint64_t*>(e2.coeffs.data()));
             return res;
         }
 #endif
@@ -134,13 +141,20 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
-#ifdef SP1
-
+#ifdef SP1TURBO
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
             syscall_bn254_fp2_submod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
                 reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
+            return res;
+        }
+#elif defined(SP1)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            syscall_bn254_fp2_submod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint64_t*>(e2.coeffs.data()));
             return res;
         }
 #endif
@@ -153,13 +167,20 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e) noexcept
     {
-#ifdef SP1
-
+#ifdef SP1TURBO
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             ExtFieldElem res = {};
             syscall_bn254_fp2_submod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
                 reinterpret_cast<const uint32_t*>(e.coeffs.data()));
+            return res;
+        }
+#elif defined(SP1)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            ExtFieldElem res = {};
+            syscall_bn254_fp2_submod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint64_t*>(e.coeffs.data()));
             return res;
         }
 #endif
@@ -172,13 +193,20 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator*(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
-#ifdef SP1
-
+#ifdef SP1TURBO
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
             syscall_bn254_fp2_mulmod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
                 reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
+            return res;
+        }
+#elif defined(SP1)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            syscall_bn254_fp2_mulmod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
+                reinterpret_cast<const uint64_t*>(e2.coeffs.data()));
             return res;
         }
 #endif

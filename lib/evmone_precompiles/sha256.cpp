@@ -168,7 +168,7 @@ static bool calc_chunk(uint8_t chunk[CHUNK_SIZE], struct BufferState* state)
 
         const uint8_t* p = chunk;
 
-#ifdef SP1
+#ifdef SP1TURBO
         uint32_t w[64];
         for (j = 0; j < 16; j++)
         {
@@ -178,6 +178,21 @@ static bool calc_chunk(uint8_t chunk[CHUNK_SIZE], struct BufferState* state)
         }
         syscall_sha256_extend(w);
         syscall_sha256_compress(w, h);
+#elif defined(SP1)
+        uint64_t w[64];
+        uint64_t h_sp1[8];
+        for (j = 0; j < 8; j++)
+            h_sp1[j] = h[j];
+        for (j = 0; j < 16; j++)
+        {
+            w[j] =
+                (uint64_t)p[0] << 24 | (uint64_t)p[1] << 16 | (uint64_t)p[2] << 8 | (uint64_t)p[3];
+            p += 4;
+        }
+        syscall_sha256_extend(w);
+        syscall_sha256_compress(w, h_sp1);
+        for (j = 0; j < 8; j++)
+            h[j] = static_cast<uint32_t>(h_sp1[j]);
 #else
 
         uint32_t ah[8];

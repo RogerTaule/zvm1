@@ -105,12 +105,20 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 
-#ifdef SP1
+#ifdef SP1TURBO
         if constexpr (BN)
         {
             UintT res = x;
             syscall_bn254_fp_mulmod(
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
+            return res;
+        }
+#elif defined(SP1)
+        if constexpr (BN)
+        {
+            UintT res = x;
+            syscall_bn254_fp_mulmod(
+                reinterpret_cast<uint64_t*>(&res), reinterpret_cast<const uint64_t*>(&y));
             return res;
         }
 #endif
@@ -156,13 +164,22 @@ public:
     {
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
-#ifdef SP1
+#ifdef SP1TURBO
 
         if constexpr (BN)
         {
             UintT res = x;
             syscall_bn254_fp_addmod(
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
+            return res;
+        }
+#elif defined(SP1)
+
+        if constexpr (BN)
+        {
+            UintT res = x;
+            syscall_bn254_fp_addmod(
+                reinterpret_cast<uint64_t*>(&res), reinterpret_cast<const uint64_t*>(&y));
             return res;
         }
 #endif
@@ -178,13 +195,22 @@ public:
     {
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
-#ifdef SP1
+#ifdef SP1TURBO
 
         if constexpr (BN)
         {
             UintT res = x;
             syscall_bn254_fp_submod(
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
+            return res;
+        }
+#elif defined(SP1)
+
+        if constexpr (BN)
+        {
+            UintT res = x;
+            syscall_bn254_fp_submod(
+                reinterpret_cast<uint64_t*>(&res), reinterpret_cast<const uint64_t*>(&y));
             return res;
         }
 #endif

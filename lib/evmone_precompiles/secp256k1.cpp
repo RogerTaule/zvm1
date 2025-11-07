@@ -52,12 +52,15 @@ evmc::address to_address(const AffinePoint& pt) noexcept
     return ret;
 }
 
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
 namespace
 {
 constexpr auto Gx = G.x.value();
 constexpr auto Gy = G.y.value();
 
+#ifdef SP1TURBO
+constexpr size_t SP1_POINT_SIZE = 16;
+// SP1TURBO uses 32-bit
 constexpr sp1_AffinePoint sp1_G = {
     static_cast<uint32_t>(Gx[0]),
     static_cast<uint32_t>(Gx[0] >> 32),
@@ -77,31 +80,39 @@ constexpr sp1_AffinePoint sp1_G = {
     static_cast<uint32_t>(Gy[3] >> 32),
 };
 
+
 uint256 sp1_to_uint256(const uint32_t v[8]) noexcept
 {
     return uint256{uint64_t(v[0]) | (uint64_t(v[1]) << 32), uint64_t(v[2]) | (uint64_t(v[3]) << 32),
         uint64_t(v[4]) | (uint64_t(v[5]) << 32), uint64_t(v[6]) | (uint64_t(v[7]) << 32)};
 }
 
-void sp1_point_from_bytes(sp1_AffinePoint r, const uint8_t bytes[64]) noexcept
-{
-    const auto x = &bytes[0];
-    const auto y = &bytes[32];
-    for (size_t i = 0; i < 8; ++i)
-        r[i] = intx::be::unsafe::load<uint32_t>(&x[32 - (i + 1) * 4]);
-    for (size_t i = 0; i < 8; ++i)
-        r[i + 8] = intx::be::unsafe::load<uint32_t>(&y[32 - (i + 1) * 4]);
-}
+
+#elif defined(SP1)
+constexpr size_t SP1_POINT_SIZE = 8;
+// HyperCube uses 64-bit
+constexpr sp1_AffinePoint sp1_G = {
+    Gx[0],
+    Gx[1],
+    Gx[2],
+    Gx[3],
+    Gy[0],
+    Gy[1],
+    Gy[2],
+    Gy[3],
+};
+
+#endif
 
 void sp1_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
 {
-    std::fill_n(r, 16, 0);
+    std::fill_n(r, SP1_POINT_SIZE, 0);
     const auto bit_width = sizeof(c) * 8 - intx::clz(c);
 
     if (bit_width == 0)
         return;
 
-    std::copy_n(p, 16, r);  // r = p
+    std::copy_n(p, SP1_POINT_SIZE, r);  // r = p
     for (auto i = bit_width - 1; i != 0; --i)
     {
         syscall_secp256k1_double(r);
@@ -173,7 +184,7 @@ std::optional<AffinePoint> secp256k1_ecdsa_recover(
 std::optional<evmc::address> ecrecover(
     const ethash::hash256& e, const uint256& r, const uint256& s, bool v) noexcept
 {
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
     // First part: copy-paste code from secp256k1_ecdsa_recover()
     if (r == 0 || r >= Curve::ORDER || s == 0 || s >= Curve::ORDER)
         return std::nullopt;
@@ -199,6 +210,8 @@ std::optional<evmc::address> ecrecover(
     assert(u2 != 0);  // Because s != 0 and r_inv != 0.
 
     // Second part: handle the points.
+#ifdef SP1TURBO
+    // SP1TURBO: decompress syscall takes uint8_t[64]
     uint8_t sp1_Rbytes[64]{};
     intx::be::unsafe::store(&sp1_Rbytes[0], r);
     syscall_secp256k1_decompress(sp1_Rbytes, v);
@@ -209,6 +222,26 @@ std::optional<evmc::address> ecrecover(
     sp1_AffinePoint sp1_R;
     sp1_point_from_bytes(sp1_R, sp1_Rbytes);
 
+#else
+    // 2. Calculate y coordinate of R from r and v.
+    static constexpr auto& Fp = Curve::Fp;
+    const auto r_mont = Fp.to_mont(r);
+    const auto y_mont = calculate_y(Fp, r_mont, v);
+    if (!y_mont.has_value())
+        return std::nullopt;
+
+    // SP1: decompress syscall takes uint64_t[8] directly (in regular form, not Montgomery)
+    const auto y_regular = Fp.from_mont(*y_mont);
+
+    sp1_AffinePoint sp1_R{};
+    for (size_t i = 0; i < 4; ++i)
+        sp1_R[i] = r[i];
+
+    for (size_t i = 4; i < 8; ++i)
+        sp1_R[i] = y_regular[i - 4];
+
+#endif
+
     sp1_AffinePoint sp1_T1;
     sp1_mul(sp1_T1, sp1_G, u1);
     sp1_AffinePoint sp1_T2;
@@ -216,7 +249,7 @@ std::optional<evmc::address> ecrecover(
 
     // FIXME: This can be double, in this case SP1 runtime panics.
     sp1_AffinePoint sp1_Q;
-    std::copy_n(sp1_T1, 16, sp1_Q);
+    std::copy_n(sp1_T1, SP1_POINT_SIZE, sp1_Q);
     syscall_secp256k1_add(sp1_Q, sp1_T2);
 
     if (is_zero(sp1_Q))
