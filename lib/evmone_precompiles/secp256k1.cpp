@@ -4,7 +4,7 @@
 #include "secp256k1.hpp"
 #include "keccak.hpp"
 
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
 #include <sp1_syscalls.hpp>
 #endif
 
@@ -32,6 +32,208 @@ std::optional<uint256> calculate_y(
     const auto candidate_parity = (m.from_mont(*y) & 1) != 0;
     return (candidate_parity == y_parity) ? *y : m.sub(0, *y);
 }
+
+#if defined(SP1TURBO) || defined(SP1)
+
+
+// extern "C" void sys_bigint(uint64_t result[4],
+//                 uint64_t op,
+//                 const uint64_t x[4],
+//                 const uint64_t y[4],
+//                 const uint64_t modulus[4]);
+
+inline void sp1_mulmod(uint64_t result[4], const uint64_t x[4], const uint64_t y[4])
+{
+    sys_bigint(result, 2, x, y, as_words(Curve::FIELD_PRIME));
+}
+
+inline void sp1_mulmod(uint256& result, const uint256& x, const uint256& y)
+{
+    sys_bigint(as_words(result), 2, as_words(x), as_words(y), as_words(Curve::FIELD_PRIME));
+}
+
+// Manual modular addition: (x + y) mod p
+inline uint256 sp1_addmod(const uint256& x, const uint256& y)
+{
+    auto sum = intx::addc(x, y);
+    // If carry or sum >= p, subtract p
+    if (sum.carry || sum.value >= Curve::FIELD_PRIME)
+        return sum.value - Curve::FIELD_PRIME;
+    return sum.value;
+}
+
+// Manual modular subtraction: (x - y) mod p
+inline uint256 sp1_submod(const uint256& x, const uint256& y)
+{
+    auto diff = intx::subc(x, y);
+    // If borrow, add p
+    if (diff.carry)
+        return diff.value + Curve::FIELD_PRIME;
+    return diff.value;
+}
+
+
+std::optional<uint256> field_sqrt_sp1(const uint256& field, const uint256& x) noexcept
+{
+    // Allocate Temporaries as uint64_t[4] arrays
+    uint64_t z[4];
+    uint64_t t0[4];
+    uint64_t t1[4];
+    uint64_t t2[4];
+    uint64_t t3[4];
+
+
+    // Copy input x to uint64_t[4] format
+    auto x_arr = as_words(x);
+
+    // Step 1: z = x^0x2
+    sp1_mulmod(z, x_arr, x_arr);
+
+    // Step 2: z = x^0x3
+    sp1_mulmod(z, x_arr, z);
+
+    // Step 4: t0 = x^0xc
+    sp1_mulmod(t0, z, z);
+    for (int i = 1; i < 2; ++i)
+        sp1_mulmod(t0, t0, t0);
+
+    // Step 5: t0 = x^0xf
+    sp1_mulmod(t0, z, t0);
+
+    // Step 6: t1 = x^0x1e
+    sp1_mulmod(t1, t0, t0);
+
+    // Step 7: t2 = x^0x1f
+    sp1_mulmod(t2, x_arr, t1);
+
+    // Step 9: t1 = x^0x7c
+    sp1_mulmod(t1, t2, t2);
+    for (int i = 1; i < 2; ++i)
+        sp1_mulmod(t1, t1, t1);
+
+    // Step 10: t1 = x^0x7f
+    sp1_mulmod(t1, z, t1);
+
+    // Step 14: t3 = x^0x7f0
+    sp1_mulmod(t3, t1, t1);
+    for (int i = 1; i < 4; ++i)
+        sp1_mulmod(t3, t3, t3);
+
+    // Step 15: t0 = x^0x7ff
+    sp1_mulmod(t0, t0, t3);
+
+    // Step 26: t3 = x^0x3ff800
+    sp1_mulmod(t3, t0, t0);
+    for (int i = 1; i < 11; ++i)
+        sp1_mulmod(t3, t3, t3);
+
+    // Step 27: t0 = x^0x3fffff
+    sp1_mulmod(t0, t0, t3);
+
+    // Step 32: t3 = x^0x7ffffe0
+    sp1_mulmod(t3, t0, t0);
+    for (int i = 1; i < 5; ++i)
+        sp1_mulmod(t3, t3, t3);
+
+    // Step 33: t2 = x^0x7ffffff
+    sp1_mulmod(t2, t2, t3);
+
+    // Step 60: t3 = x^0x3ffffff8000000
+    sp1_mulmod(t3, t2, t2);
+    for (int i = 1; i < 27; ++i)
+        sp1_mulmod(t3, t3, t3);
+
+    // Step 61: t2 = x^0x3fffffffffffff
+    sp1_mulmod(t2, t2, t3);
+
+    // Step 115: t3 = x^0xfffffffffffffc0000000000000
+    sp1_mulmod(t3, t2, t2);
+    for (int i = 1; i < 54; ++i)
+        sp1_mulmod(t3, t3, t3);
+
+    // Step 116: t2 = x^0xfffffffffffffffffffffffffff
+    sp1_mulmod(t2, t2, t3);
+
+    // Step 224: t3 = x^0xfffffffffffffffffffffffffff000000000000000000000000000
+    sp1_mulmod(t3, t2, t2);
+    for (int i = 1; i < 108; ++i)
+        sp1_mulmod(t3, t3, t3);
+
+    // Step 225: t2 = x^0xffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    sp1_mulmod(t2, t2, t3);
+
+    // Step 232: t2 = x^0x7fffffffffffffffffffffffffffffffffffffffffffffffffffff80
+    for (int i = 0; i < 7; ++i)
+        sp1_mulmod(t2, t2, t2);
+
+    // Step 233: t1 = x^0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffff
+    sp1_mulmod(t1, t1, t2);
+
+    // Step 256: t1 = x^0x3fffffffffffffffffffffffffffffffffffffffffffffffffffffff800000
+    for (int i = 0; i < 23; ++i)
+        sp1_mulmod(t1, t1, t1);
+
+    // Step 257: t0 = x^0x3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff
+    sp1_mulmod(t0, t0, t1);
+
+    // Step 263: t0 = x^0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc0
+    for (int i = 0; i < 6; ++i)
+        sp1_mulmod(t0, t0, t0);
+
+    // Step 264: z = x^0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc3
+    sp1_mulmod(z, z, t0);
+
+    // Step 266: z = x^0x3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0c
+    for (int i = 0; i < 2; ++i)
+        sp1_mulmod(z, z, z);
+
+    // Verify: z^2 == x (mod p)
+    uint64_t z_squared[4];
+    sp1_mulmod(z_squared, z, z);
+
+    uint256 result(z[0], z[1], z[2], z[3]);
+    uint256 z_sq_check(z_squared[0], z_squared[1], z_squared[2], z_squared[3]);
+
+    if (z_sq_check != x)
+        return std::nullopt;  // Computed value is not the square root.
+
+    return result;
+}
+
+
+/// Decompress a secp256k1 point from x-coordinate and y-parity (SP1 version).
+/// Returns y-coordinate in regular (non-Montgomery) form, or nullopt if x is not on curve.
+/// This version uses SP1 syscalls which operate on regular form values.
+
+std::optional<uint256> decompress(const uint256& x, bool y_parity) noexcept
+{
+    static constexpr auto& Fp = Curve::Fp;
+
+    // Calculate x^3 + 7 
+    const auto B_regular = Fp.from_mont(B);
+
+    uint256 x_squared{};
+    sp1_mulmod(x_squared, x, x);  // x_squared = x^2 mod p
+
+    uint256 x_cubed{};
+    sp1_mulmod(x_cubed, x_squared, x);  // x_cubed = x^3 mod p
+
+    uint256 y_squared = sp1_addmod(x_cubed, B_regular);  // y_squared = x^3 + 7 mod p
+
+    // sqrt(x^3 + 7)
+    const auto y = field_sqrt_sp1(Curve::FIELD_PRIME, y_squared);
+    if (!y.has_value())
+        return std::nullopt;
+
+    // Check parity and negate if needed (using regular form arithmetic)
+    const auto candidate_parity = (*y & 1) != 0;
+    if (candidate_parity == y_parity)
+        return *y;
+    else
+        return sp1_submod(uint256{0}, *y);  // Return (0 - y) mod p
+}
+#endif
+
 
 AffinePoint mul(const AffinePoint& p, const uint256& c) noexcept
 {
@@ -223,22 +425,17 @@ std::optional<evmc::address> ecrecover(
     sp1_point_from_bytes(sp1_R, sp1_Rbytes);
 
 #else
-    // 2. Calculate y coordinate of R from r and v.
-    static constexpr auto& Fp = Curve::Fp;
-    const auto r_mont = Fp.to_mont(r);
-    const auto y_mont = calculate_y(Fp, r_mont, v);
-    if (!y_mont.has_value())
+    // SP1 Hypercube no longer has the secp256k1_decompress precompile
+    const auto y = decompress(r, v);
+    if (!y.has_value())
         return std::nullopt;
-
-    // SP1: decompress syscall takes uint64_t[8] directly (in regular form, not Montgomery)
-    const auto y_regular = Fp.from_mont(*y_mont);
 
     sp1_AffinePoint sp1_R{};
     for (size_t i = 0; i < 4; ++i)
         sp1_R[i] = r[i];
 
     for (size_t i = 4; i < 8; ++i)
-        sp1_R[i] = y_regular[i - 4];
+        sp1_R[i] = (*y)[i - 4];
 
 #endif
 
@@ -416,4 +613,6 @@ std::optional<uint256> field_sqrt(const ModArith<uint256>& m, const uint256& x) 
 
     return z;
 }
+
+
 }  // namespace evmmax::secp256k1
