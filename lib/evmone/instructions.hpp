@@ -214,25 +214,26 @@ inline void addmod(StackTop stack) noexcept
         return;
     }
 
-#ifdef SP1
+#if defined(SP1TURBO) || defined(SP1)
     auto [sum, carry] = intx::addc(x, y);
     x = m;
     m = sum;
     y = 1;
-    syscall_uint256_mulmod(reinterpret_cast<uint32_t*>(&m), reinterpret_cast<const uint32_t*>(&y));
+    syscall_uint256_mulmod(reinterpret_cast<uintType*>(&m), reinterpret_cast<const uintType*>(&y));
 
     if (carry)
     {
         auto s = m;
         m = uint256{1} << 128;
         y = m;
-        syscall_uint256_mulmod(reinterpret_cast<uint32_t*>(&m), reinterpret_cast<const uint32_t*>(&y));
+        syscall_uint256_mulmod(
+            reinterpret_cast<uintType*>(&m), reinterpret_cast<const uintType*>(&y));
         m += s;
         if (m >= x)  // TODO: untested.
             m -= x;
     }
 #else
-      m = intx::addmod(x, y, m);
+    m = intx::addmod(x, y, m);
 #endif
 }
 
@@ -248,13 +249,13 @@ inline void mulmod(StackTop stack) noexcept
         return;
     }
 
-#if SP1
+#if defined(SP1TURBO) || defined(SP1)
     // SP1 syscall expects &x and &(y || m).
     // Because the EVM stack grows downwards, we start with m, y, x.
     // So swap to get x, y, m.
     std::swap(x, m);
     // The result will be in the &m position (now containing x) as expected by EVM.
-    syscall_uint256_mulmod(reinterpret_cast<uint32_t*>(&m), reinterpret_cast<const uint32_t*>(&y));
+    syscall_uint256_mulmod(reinterpret_cast<uintType*>(&m), reinterpret_cast<const uintType*>(&y));
 #else
     m = intx::mulmod(x, y, m);
 #endif
