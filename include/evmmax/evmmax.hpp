@@ -4,11 +4,30 @@
 #pragma once
 
 #include <intx/intx.hpp>
+
+#ifdef SP1
 #include <sp1_syscalls.hpp>
+#endif
 
 namespace evmmax
 {
 using namespace intx;
+
+/// Compute the modulus inverse for Montgomery multiplication, i.e. N': mod⋅N' = 2⁶⁴-1.
+///
+/// @param mod0  The least significant word of the modulus.
+constexpr uint64_t compute_mod_inv(uint64_t mod0) noexcept
+{
+    // TODO: Find what is this algorithm and why it works.
+    uint64_t base = 0 - mod0;
+    uint64_t result = 1;
+    for (auto i = 0; i < 64; ++i)
+    {
+        result *= base;
+        base *= base;
+    }
+    return result;
+}
 
 /// The modular arithmetic operations for EVMMAX (EVM Modular Arithmetic Extensions).
 template <typename UintT, bool BN = false>
@@ -22,22 +41,6 @@ private:
 
     /// The modulus inversion, i.e. the number N' such that mod⋅N' = 2⁶⁴-1.
     const uint64_t m_mod_inv;
-
-    /// Compute the modulus inverse for Montgomery multiplication, i.e. N': mod⋅N' = 2⁶⁴-1.
-    ///
-    /// @param mod0  The least significant word of the modulus.
-    static constexpr uint64_t compute_mod_inv(uint64_t mod0) noexcept
-    {
-        // TODO: Find what is this algorithm and why it works.
-        uint64_t base = 0 - mod0;
-        uint64_t result = 1;
-        for (auto i = 0; i < 64; ++i)
-        {
-            result *= base;
-            base *= base;
-        }
-        return result;
-    }
 
     /// Compute R² % mod.
     static constexpr UintT compute_r_squared(const UintT& mod) noexcept
@@ -99,6 +102,7 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 
+#ifdef SP1
         if constexpr (BN)
         {
             UintT res = x;
@@ -106,6 +110,7 @@ public:
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
         }
+#endif
 
         // Coarsely Integrated Operand Scanning (CIOS) Method
         // Based on 2.3.2 from
@@ -148,6 +153,7 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 
+#ifdef SP1
         if constexpr (BN)
         {
             UintT res = x;
@@ -155,6 +161,7 @@ public:
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
         }
+#endif
 
         const auto s = addc(x, y);  // TODO: cannot overflow if modulus is sparse (e.g. 255 bits).
         const auto d = subc(s.value, mod);
@@ -168,6 +175,7 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 
+#ifdef SP1
         if constexpr (BN)
         {
             UintT res = x;
@@ -175,6 +183,7 @@ public:
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
         }
+#endif
 
         const auto d = subc(x, y);
         const auto s = d.value + mod;
@@ -197,7 +206,7 @@ public:
         assert(mod >= 3);
 
         // Precompute inverse of 2 modulo mod: inv2 * 2 % mod == 1.
-        // The 1/2 is inexact division which can be fixed by adding "0" to the numerator
+        // The 1/2 is inexact division that can be fixed by adding "0" to the numerator
         // and making it even: (mod + 1) / 2. To avoid potential overflow of (1 + mod)
         // we rewrite it further to (mod - 1 + 2) / 2 = (mod - 1) / 2 + 1 = ⌊mod / 2⌋ + 1.
         const auto inv2 = (mod >> 1) + 1;
@@ -222,7 +231,7 @@ public:
         {
             if ((a & 1) != 0)
             {
-                // if a is odd update it to a - b.
+                // if a is odd, update it to a - b.
                 if (const auto [d, less] = subc(a, b); less)
                 {
                     // swap a and b in case a < b.
@@ -242,16 +251,16 @@ public:
             // Compute a / 2 % mod, a is even so division is exact and can be computed as ⌊a / 2⌋.
             a >>= 1;
 
-            // Compute u / 2 % mod. If u is even this can be computed as ⌊u / 2⌋.
+            // Compute u / 2 % mod. If u is even, this can be computed as ⌊u / 2⌋.
             // Otherwise, (u - 1 + 1) / 2 = ⌊u / 2⌋ + (1 / 2 % mod).
             const auto u_odd = (u & 1) != 0;
             u >>= 1;
             if (u_odd)
-                u += inv2;  // if u is odd add back ½ % mod.
+                u += inv2;  // if u is odd, add back ½ % mod.
         }
 
-        if (b != 1)
-            return 0;  // not invertible
+        if (b != 1) [[unlikely]]
+            v = 0;  // not invertible
         return v;
     }
 };

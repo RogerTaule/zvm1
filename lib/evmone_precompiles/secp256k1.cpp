@@ -33,12 +33,6 @@ std::optional<uint256> calculate_y(
     return (candidate_parity == y_parity) ? *y : m.sub(0, *y);
 }
 
-AffinePoint mul(const AffinePoint& p, const uint256& c) noexcept
-{
-    const auto r = ecc::mul(p, c);
-    return ecc::to_affine<Curve>(r);
-}
-
 evmc::address to_address(const AffinePoint& pt) noexcept
 {
     // This performs Ethereum's address hashing on an uncompressed pubkey.
@@ -157,6 +151,7 @@ std::optional<AffinePoint> secp256k1_ecdsa_recover(
 
     // 6. Calculate public key point Q.
     const auto R = AffinePoint{AffinePoint::FE::wrap(r_mont), AffinePoint::FE::wrap(*y_mont)};
+    // u1 and u2 are less than `Curve::ORDER`, so the multiplications will not reduce.
     const auto T1 = ecc::mul(G, u1);
     const auto T2 = ecc::mul(R, u2);
     assert(T2 != 0);  // Because u2 != 0 and R != 0.

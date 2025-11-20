@@ -7,6 +7,7 @@
 #include "../state/bloom_filter.hpp"
 #include "../state/test_state.hpp"
 #include "../state/transaction.hpp"
+#include "../utils/blob_schedule.hpp"
 #include "../utils/utils.hpp"
 #include <evmc/evmc.hpp>
 #include <span>
@@ -48,6 +49,7 @@ struct TestBlock
 {
     state::BlockInfo block_info;
     std::vector<state::Transaction> transactions;
+    size_t rlp_size = 0;
     bool withdrawals_parse_success = true;
     bool valid = true;
 
@@ -68,6 +70,8 @@ struct BlockchainTest
     BlockHeader genesis_block_header;
     TestState pre_state;
     RevisionSchedule rev;
+    std::string network;
+    BlobSchedule blob_schedule;
 
     Expectation expectation;
 };
