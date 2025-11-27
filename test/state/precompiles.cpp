@@ -4,6 +4,7 @@
 
 #include "precompiles.hpp"
 #include "../utils/stdx/utility.hpp"
+#include "evmone_precompiles/secp256r1.hpp"
 #include "precompiles_internal.hpp"
 #include "precompiles_stubs.hpp"
 #include <evmone_precompiles/blake2b.hpp>
@@ -23,6 +24,7 @@
 
 #include <silkworm/core/execution/precompile.hpp>
 
+#ifdef SP1
 #ifdef SP1
 #include <sp1_syscalls.hpp>
 #endif
@@ -292,7 +294,7 @@ PrecompileAnalysis bls12_map_fp2_to_g2_analyze(bytes_view, evmc_revision) noexce
     return {BLS12_MAP_FP2_TO_G2_PRECOMPILE_GAS, BLS12_G2_POINT_SIZE};
 }
 
-static PrecompileAnalysis p256verify_analyze(bytes_view, evmc_revision) noexcept
+PrecompileAnalysis p256verify_analyze(bytes_view, evmc_revision) noexcept
 {
     return {6900, 32};
 }
@@ -437,6 +439,7 @@ ExecutionResult expmod_execute_gmp(
 }
 #endif
 
+#ifdef SP1
 namespace
 {
 using intx::uint256;
@@ -695,13 +698,21 @@ ExecutionResult bls12_g1add_execute(const uint8_t* input, size_t input_size, uin
 ExecutionResult bls12_g1msm_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    if (input_size % BLS12_G1_MUL_INPUT_SIZE != 0)
-        return {EVMC_PRECOMPILE_FAILURE, 0};
+    // Checked in `_analyze` function which must be called before.
+    assert(input_size % BLS12_G1_MUL_INPUT_SIZE == 0);
+    assert(output_size == BLS12_G1_POINT_SIZE);
 
-    // assert(output_size == BLS12_G1_POINT_SIZE);
-
-    if (!crypto::bls::g1_msm(output, &output[64], input, input_size))
-        return {EVMC_PRECOMPILE_FAILURE, 0};
+    if (input_size == BLS12_G1_MUL_INPUT_SIZE)
+    {
+        // Optimize single multiplication case.
+        if (!crypto::bls::g1_mul(output, &output[64], input, &input[64], &input[128]))
+            return {EVMC_PRECOMPILE_FAILURE, 0};
+    }
+    else
+    {
+        if (!crypto::bls::g1_msm(output, &output[64], input, input_size))
+            return {EVMC_PRECOMPILE_FAILURE, 0};
+    }
 
     return {EVMC_SUCCESS, BLS12_G1_POINT_SIZE};
 }
@@ -723,13 +734,21 @@ ExecutionResult bls12_g2add_execute(const uint8_t* input, size_t input_size, uin
 ExecutionResult bls12_g2msm_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    if (input_size % BLS12_G2_MUL_INPUT_SIZE != 0)
-        return {EVMC_PRECOMPILE_FAILURE, 0};
+    // Checked in `_analyze` function which must be called before.
+    assert(input_size % BLS12_G2_MUL_INPUT_SIZE == 0);
+    assert(output_size == BLS12_G2_POINT_SIZE);
 
-    // assert(output_size == BLS12_G2_POINT_SIZE);
-
-    if (!crypto::bls::g2_msm(output, &output[128], input, input_size))
-        return {EVMC_PRECOMPILE_FAILURE, 0};
+    if (input_size == BLS12_G2_MUL_INPUT_SIZE)
+    {
+        // Optimize single multiplication case.
+        if (!crypto::bls::g2_mul(output, &output[128], input, &input[128], &input[256]))
+            return {EVMC_PRECOMPILE_FAILURE, 0};
+    }
+    else
+    {
+        if (!crypto::bls::g2_msm(output, &output[128], input, input_size))
+            return {EVMC_PRECOMPILE_FAILURE, 0};
+    }
 
     return {EVMC_SUCCESS, BLS12_G2_POINT_SIZE};
 }
@@ -737,10 +756,9 @@ ExecutionResult bls12_g2msm_execute(const uint8_t* input, size_t input_size, uin
 ExecutionResult bls12_pairing_check_execute(const uint8_t* input, size_t input_size,
     uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
 {
-    if (input_size % (BLS12_G1_POINT_SIZE + BLS12_G2_POINT_SIZE) != 0)
-        return {EVMC_PRECOMPILE_FAILURE, 0};
-
-    // assert(output_size == 32);
+    // Checked in `_analyze` function which must be called before.
+    assert(input_size % (BLS12_G1_POINT_SIZE + BLS12_G2_POINT_SIZE) == 0);
+    assert(output_size == 32);
 
     if (!crypto::bls::pairing_check(output, input, input_size))
         return {EVMC_PRECOMPILE_FAILURE, 0};
@@ -776,16 +794,32 @@ ExecutionResult bls12_map_fp2_to_g2_execute(const uint8_t* input, size_t input_s
     return {EVMC_SUCCESS, BLS12_G2_POINT_SIZE};
 }
 
-static ExecutionResult p256verify_execute(
-    const uint8_t*, size_t, uint8_t*, [[maybe_unused]] size_t output_size) noexcept
+ExecutionResult p256verify_execute(const uint8_t* input, size_t input_size, uint8_t* output,
+    [[maybe_unused]] size_t output_size) noexcept
 {
     assert(output_size >= 32);
-    // Not implemented. Assume input or signature is invalid.
-    return {EVMC_SUCCESS, 0};
+
+    if (input_size != 160)
+        return {EVMC_SUCCESS, 0};
+
+    ethash::hash256 h{};
+    std::copy_n(input, sizeof(h), h.bytes);
+    const auto r = intx::be::unsafe::load<intx::uint256>(input + 32);
+    const auto s = intx::be::unsafe::load<intx::uint256>(input + 64);
+    const auto qx = intx::be::unsafe::load<intx::uint256>(input + 96);
+    const auto qy = intx::be::unsafe::load<intx::uint256>(input + 128);
+
+    if (!evmmax::secp256r1::verify(h, r, s, qx, qy))
+        return {EVMC_SUCCESS, 0};  // In case of invalid signature, return empty output.
+
+    // Return 1_u256.
+    std::fill_n(output, 31, 0);
+    output[31] = 1;
+    return {EVMC_SUCCESS, 32};
 }
 
-static ExecutionResult silkworm_ecrecover_execute(const uint8_t* input, size_t input_size,
-    uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
+static ExecutionResult silkworm_ecrecover_execute(const uint8_t* input, size_t input_size, uint8_t* output,
+    [[maybe_unused]] size_t output_size) noexcept
 {
     auto res = silkworm::precompile::ecrec_run({input, input_size});
     std::memcpy(output, res->data(), res->size());

@@ -19,7 +19,7 @@
 #include <sp1_syscalls.hpp>
 #endif
 
-#if defined(__x86_64__)
+#if defined(__x86_64__)  // NOLINT(readability-use-concise-preprocessor-directives)
 
 #include <cpuid.h>
 #include <x86intrin.h>
@@ -275,7 +275,7 @@ static void sha_256_generic(uint32_t h[8], const std::byte* input, size_t len)
 
 static void (*sha_256_best)(uint32_t h[8], const std::byte* input, size_t len) = sha_256_generic;
 
-#if defined(__x86_64__)
+#if defined(__x86_64__)  // NOLINT(readability-use-concise-preprocessor-directives)
 
 __attribute__((target("bmi,bmi2"))) static void sha_256_x86_bmi(
     uint32_t h[8], const std::byte* input, size_t len)

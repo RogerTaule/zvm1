@@ -65,7 +65,7 @@ executors:
   macos-xcode-min:
     resource_class: macos.m1.medium.gen1
     macos:
-      xcode: 16.0.0
+      xcode: 16.2.0
     environment:
       CMAKE_BUILD_PARALLEL_LEVEL: 6
 
@@ -183,7 +183,7 @@ commands:
             if [ "$TOOLCHAIN" ]; then
               export toolchain_option="-DTOOLCHAIN=$TOOLCHAIN"
             fi
-            cmake ../project $toolchain_option -DCMAKE_INSTALL_PREFIX=~/install -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DEVMONE_TESTING=ON $CMAKE_OPTIONS
+            cmake ../project $toolchain_option -DCMAKE_INSTALL_PREFIX=~/install -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_COMPILE_WARNING_AS_ERROR=TRUE -DEVMONE_TESTING=ON $CMAKE_OPTIONS
       - save_cache:
           name: "Save Hunter cache"
           key: *hunter-cache-key
@@ -223,13 +223,21 @@ commands:
 
   collect_coverage_clang:
     description: "Collect coverage data (clang)"
+    parameters:
+      ignore_filename_regex:
+        type: string
+        default: ""
+      binaries:
+        type: string
+        default: evmone-unittests evmone-statetest evmone-blockchaintest evmone-t8n
     steps:
       - run:
           name: "Collect coverage data (clang)"
           working_directory: ~/build
           command: |
-            OBJECTS="-object bin/evmone-unittests -object bin/evmone-statetest -object bin/evmone-blockchaintest -object bin/evmone-t8n"
-            ARGS="lib/libevmone.so $OBJECTS -Xdemangler llvm-cxxfilt -instr-profile=evmone.profdata -ignore-filename-regex=include/evmc"
+            IGNORE_FILENAME_REGEX='include/evmc<<#parameters.ignore_filename_regex>>|<<parameters.ignore_filename_regex>><</parameters.ignore_filename_regex>>'
+            OBJECTS=$(printf -- '-object bin/%s ' <<parameters.binaries>>)
+            ARGS="lib/libevmone.so $OBJECTS -Xdemangler llvm-cxxfilt -instr-profile=evmone.profdata -ignore-filename-regex=$IGNORE_FILENAME_REGEX"
 
             rm -rf ~/coverage
             mkdir ~/coverage
@@ -238,7 +246,7 @@ commands:
             
             llvm-cov export -format=lcov $ARGS -skip-expansions > ~/coverage/coverage.lcov
             
-            llvm-cov show $ARGS -format=html -show-line-counts-or-regions -show-mcdc -o ~/coverage/html
+            llvm-cov show $ARGS -format=html -show-line-counts-or-regions -show-mcdc -show-mcdc-summary -show-branches=count -o ~/coverage/html
 
             llvm-cov report $ARGS -show-mcdc-summary > ~/coverage/report.txt
             llvm-cov report $ARGS -use-color -show-mcdc-summary
@@ -358,7 +366,8 @@ jobs:
 
   deploy:
     docker:
-      - image: cimg/go
+      - image: cimg/go:1.25.1
+    resource_class: small
     steps:
       - run:
           name: "Install GHR"
@@ -384,7 +393,7 @@ jobs:
     steps:
       - build
       - download_execution_spec_tests:
-          release: v5.1.0
+          release: v5.3.0
           # develop includes stable
           fixtures_suffix: develop
       - run:
@@ -394,7 +403,6 @@ jobs:
           command: >
             LLVM_PROFILE_FILE=state_tests.profraw
             bin/evmone-statetest ~/spec-tests/fixtures/state_tests
-            --gtest_filter='-osaka/eip7951_p256verify_precompiles.*'
       - run:
           name: "Execution spec tests (develop, blockchain_tests)"
           # Tests for in-development EVM revision currently passing.
@@ -402,8 +410,9 @@ jobs:
           command: >
             LLVM_PROFILE_FILE=blockchain_tests.profraw
             bin/evmone-blockchaintest ~/spec-tests/fixtures/blockchain_tests
-            --gtest_filter='-cancun/eip4844_blobs.test_fork_transition_excess_blob_gas_post_blob_genesis:osaka/eip7918_blob_reserve_price.*:osaka/eip7934_block_rlp_limit.*:osaka/eip7951_p256verify_precompiles.*'
-      - collect_coverage_clang
+      - collect_coverage_clang:
+          ignore_filename_regex: lib/evmone/(advanced|cpu_check|eof|lru_cache|tracing|vm)|test/(experimental|t8n|unittests|utils)
+          binaries: evmone-statetest evmone-blockchaintest
       - upload_coverage:
           flags: eest-develop
 
@@ -604,7 +613,7 @@ jobs:
     executor: linux-base
     steps:
       - install_cmake:
-          version: 3.18.4
+          version: 3.19.8
       - build
       - test
 
