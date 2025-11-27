@@ -25,7 +25,6 @@
 #include <silkworm/core/execution/precompile.hpp>
 
 #ifdef SP1
-#ifdef SP1
 #include <sp1_syscalls.hpp>
 #endif
 
@@ -439,7 +438,6 @@ ExecutionResult expmod_execute_gmp(
 }
 #endif
 
-#ifdef SP1
 namespace
 {
 using intx::uint256;

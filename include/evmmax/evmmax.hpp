@@ -162,8 +162,6 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 #ifdef SP1TURBO
-
-#ifdef SP1
         if constexpr (BN)
         {
             UintT res = x;
@@ -194,8 +192,6 @@ public:
         if constexpr (!BN)
             assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 #ifdef SP1TURBO
-
-#ifdef SP1
         if constexpr (BN)
         {
             UintT res = x;
