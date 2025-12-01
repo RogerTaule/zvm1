@@ -159,16 +159,21 @@ void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> ex
     const auto sp1_base = reinterpret_cast<const uint32_t*>(&base);
     const auto sp1_mod = reinterpret_cast<const uint32_t*>(&mod);
 
-    uint256 ret = 1;
-    const auto sp1_ret = reinterpret_cast<uint32_t*>(&ret);
-    for (const auto e : exp)
+    uint256 ret = 0;
+
+    if (mod > 1) [[likely]]
     {
-        for (size_t i = 8; i != 0; --i)
+        ret = 1;
+        const auto sp1_ret = reinterpret_cast<uint32_t*>(&ret);
+        for (const auto e : exp)
         {
-            sys_bigint(sp1_ret, 0, sp1_ret, sp1_ret, sp1_mod);
-            const auto bit = e & (1 << (i - 1));
-            if (bit != 0)
-                sys_bigint(sp1_ret, 0, sp1_ret, sp1_base, sp1_mod);
+            for (size_t i = 8; i != 0; --i)
+            {
+                sys_bigint(sp1_ret, 0, sp1_ret, sp1_ret, sp1_mod);
+                const auto bit = e & (1 << (i - 1));
+                if (bit != 0)
+                    sys_bigint(sp1_ret, 0, sp1_ret, sp1_base, sp1_mod);
+            }
         }
     }
 
