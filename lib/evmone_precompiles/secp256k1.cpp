@@ -209,13 +209,30 @@ std::optional<evmc::address> ecrecover(
     sp1_AffinePoint sp1_T2;
     sp1_mul(sp1_T2, sp1_R, u2);
 
-    // FIXME: This can be double, in this case SP1 runtime panics.
     sp1_AffinePoint sp1_Q;
     std::copy_n(sp1_T1, 16, sp1_Q);
-    syscall_secp256k1_add(sp1_Q, sp1_T2);
 
-    if (is_zero(sp1_Q))
-        return std::nullopt;
+    const auto& t1x = *(const uint256*)&sp1_Q[0];
+    const auto& t1y = *(const uint256*)&sp1_Q[8];
+    const auto& t2x = *(const uint256*)&sp1_T2[0];
+    const auto& t2y = *(const uint256*)&sp1_T2[8];
+
+    if (t1x == t2x) [[unlikely]]
+    {
+        if (t1y == t2y)
+        {
+            syscall_bn254_double(sp1_Q);
+        }
+        if (t1y == Curve::FIELD_PRIME - t2y)
+        {
+            // Q is 0.
+            return std::nullopt;
+        }
+    }
+    else
+    {
+        syscall_secp256k1_add(sp1_Q, sp1_T2);
+    }
 
     // Third part: hash it.
     uint8_t serialized[64];
