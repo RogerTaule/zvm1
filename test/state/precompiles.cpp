@@ -22,7 +22,7 @@
 #include <limits>
 #include <span>
 
-#include <silkworm/core/execution/precompile.hpp>
+#include <zilk_core/core/execution/precompile.hpp>
 
 #ifdef SP1
 #include <sp1_syscalls.hpp>
