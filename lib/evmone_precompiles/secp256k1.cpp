@@ -447,7 +447,6 @@ std::optional<evmc::address> ecrecover(
 
     sp1_AffinePoint sp1_Q;
     std::copy_n(sp1_T1, SP1_POINT_SIZE, sp1_Q);
-    syscall_secp256k1_add(sp1_Q, sp1_T2);
 
     const auto& t1x = *(const uint256*)&sp1_Q[0];
     const auto& t1y = *(const uint256*)&sp1_Q[8];
