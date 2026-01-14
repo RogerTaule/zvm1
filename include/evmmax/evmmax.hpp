@@ -61,12 +61,14 @@ private:
 public:
     constexpr explicit ModArith(const UintT& modulus) noexcept
       : mod{modulus},
+#if defined SP1 || defined SP1TURBO
         m_r_squared{BN ? 1 : compute_r_squared(modulus)},
         m_mod_inv{BN ? 0 : compute_mod_inv(modulus[0])}
-    {
-        if constexpr (!BN)
-            assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
-    }
+#else
+        m_r_squared{compute_r_squared(modulus)},
+        m_mod_inv{compute_mod_inv(modulus[0])}
+#endif
+    {}
 
     /// Converts a value to Montgomery form.
     ///
@@ -74,9 +76,11 @@ public:
     /// what gives aR²R⁻¹ % mod = aR % mod.
     constexpr UintT to_mont(const UintT& x) const noexcept
     {
+#if defined SP1 || defined SP1TURBO
         if constexpr (BN)
             return x;
         else
+#endif
             return mul(x, m_r_squared);
     }
 
@@ -86,9 +90,11 @@ public:
     /// Montgomery multiplication mul(x, 1) what gives aRR⁻¹ % mod = a % mod.
     constexpr UintT from_mont(const UintT& x) const noexcept
     {
+#if defined SP1 || defined SP1TURBO
         if constexpr (BN)
             return x;
         else
+#endif
             return mul(x, 1);
     }
 
@@ -99,9 +105,6 @@ public:
     /// The result (abR) is in Montgomery form.
     constexpr UintT mul(const UintT& x, const UintT& y) const noexcept
     {
-        if constexpr (!BN)
-            assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
-
 #ifdef SP1TURBO
         if constexpr (BN)
         {
@@ -159,8 +162,6 @@ public:
     /// but are not required to be in Montgomery form.
     constexpr UintT add(const UintT& x, const UintT& y) const noexcept
     {
-        if constexpr (!BN)
-            assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 #ifdef SP1TURBO
         if constexpr (BN)
         {
@@ -168,6 +169,11 @@ public:
             syscall_bn254_fp_addmod(
                 reinterpret_cast<uint32_t*>(&res), reinterpret_cast<const uint32_t*>(&y));
             return res;
+        }
+        else
+        {
+            // TODO: Temporary sanity check if the BN specialization is enabled correctly.
+            assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
         }
 #elif defined(SP1)
 
@@ -189,8 +195,6 @@ public:
     /// but are not required to be in Montgomery form.
     constexpr UintT sub(const UintT& x, const UintT& y) const noexcept
     {
-        if constexpr (!BN)
-            assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
 #ifdef SP1TURBO
         if constexpr (BN)
         {
@@ -219,14 +223,6 @@ public:
     /// If x is not invertible, the result is 0.
     constexpr UintT inv(const UintT& x) const noexcept
     {
-        if constexpr (!BN)
-            assert(mod != 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47_u256);
-
-        if constexpr (BN)
-        {
-            std::puts("v");
-        }
-
         assert((mod & 1) == 1);
         assert(mod >= 3);
 
