@@ -220,15 +220,14 @@ inline void addmod(StackTop stack) noexcept
     x = m;
     m = sum;
     y = 1;
-    syscall_uint256_mulmod(reinterpret_cast<uintType*>(&m), reinterpret_cast<const uintType*>(&y));
+    sp1::mulmod(m, std::span<const uint256, 2>{&y, 2});
 
     if (carry)
     {
         auto s = m;
         m = uint256{1} << 128;
         y = m;
-        syscall_uint256_mulmod(
-            reinterpret_cast<uintType*>(&m), reinterpret_cast<const uintType*>(&y));
+        sp1::mulmod(m, std::span<const uint256, 2>{&y, 2});
         m += s;
         if (m >= x)  // TODO: untested.
             m -= x;
@@ -256,7 +255,7 @@ inline void mulmod(StackTop stack) noexcept
     // So swap to get x, y, m.
     std::swap(x, m);
     // The result will be in the &m position (now containing x) as expected by EVM.
-    syscall_uint256_mulmod(reinterpret_cast<uintType*>(&m), reinterpret_cast<const uintType*>(&y));
+    sp1::mulmod(m, std::span<const uint256, 2>{&y, 2});
 #else
     m = intx::mulmod(x, y, m);
 #endif
