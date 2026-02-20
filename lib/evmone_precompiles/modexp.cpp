@@ -148,58 +148,35 @@ void modexp_impl(std::span<const uint8_t> base_bytes, Exponent exp,
     trunc(std::span{output, mod_bytes.size()}, result);
 }
 
-#ifdef SP1TURBO
+#if defined(SP1) || defined(SP1TURBO)
 void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp,
     std::span<const uint8_t> mod_bytes, uint8_t* output) noexcept
 {
-    const auto base = load<uint256>(base_bytes);
-    const auto mod = load<uint256>(mod_bytes);
+    uint256 args[2];
+    auto& arg = args[0];
+    auto& mod = args[1];
 
-    // SP1TURBO uses 32-bit limbs in little-endian order so we can just cast the pointers.
-    const auto sp1_base = reinterpret_cast<const uint32_t*>(&base);
-    const auto sp1_mod = reinterpret_cast<const uint32_t*>(&mod);
+    const auto base = load<uint256>(base_bytes);
+    mod = load<uint256>(mod_bytes);
 
     uint256 ret = 0;
 
     if (mod > 1) [[likely]]
     {
         ret = 1;
-        const auto sp1_ret = reinterpret_cast<uint32_t*>(&ret);
         for (const auto e : exp)
         {
             for (size_t i = 8; i != 0; --i)
             {
-                sys_bigint(sp1_ret, 0, sp1_ret, sp1_ret, sp1_mod);
+                arg = ret;
+                sp1::mulmod(ret, args);
                 const auto bit = e & (1 << (i - 1));
                 if (bit != 0)
-                    sys_bigint(sp1_ret, 0, sp1_ret, sp1_base, sp1_mod);
+                {
+                    arg = base;
+                    sp1::mulmod(ret, args);
+                }
             }
-        }
-    }
-
-    trunc(std::span{output, mod_bytes.size()}, ret);
-}
-#elif defined(SP1)
-void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp,
-    std::span<const uint8_t> mod_bytes, uint8_t* output) noexcept
-{
-    const auto base = load<uint256>(base_bytes);
-    const auto mod = load<uint256>(mod_bytes);
-
-    // SP1 uses 64-bit limbs in little-endian order so we can just cast the pointers.
-    const auto sp1_base = reinterpret_cast<const uint64_t*>(&base);
-    const auto sp1_mod = reinterpret_cast<const uint64_t*>(&mod);
-
-    uint256 ret = 1;
-    const auto sp1_ret = reinterpret_cast<uint64_t*>(&ret);
-    for (const auto e : exp)
-    {
-        for (size_t i = 8; i != 0; --i)
-        {
-            sys_bigint(sp1_ret, 0, sp1_ret, sp1_ret, sp1_mod);
-            const auto bit = e & (1 << (i - 1));
-            if (bit != 0)
-                sys_bigint(sp1_ret, 0, sp1_ret, sp1_base, sp1_mod);
         }
     }
 

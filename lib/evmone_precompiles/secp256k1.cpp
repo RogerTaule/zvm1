@@ -35,21 +35,16 @@ std::optional<uint256> calculate_y(
 
 #if defined(SP1TURBO) || defined(SP1)
 
-
-// extern "C" void sys_bigint(uint64_t result[4],
-//                 uint64_t op,
-//                 const uint64_t x[4],
-//                 const uint64_t y[4],
-//                 const uint64_t modulus[4]);
-
-inline void sp1_mulmod(uint64_t result[4], const uint64_t x[4], const uint64_t y[4])
-{
-    sys_bigint(result, 2, x, y, as_words(Curve::FIELD_PRIME));
-}
-
 inline void sp1_mulmod(uint256& result, const uint256& x, const uint256& y)
 {
-    sys_bigint(as_words(result), 2, as_words(x), as_words(y), as_words(Curve::FIELD_PRIME));
+    // TODO(sp1): This can be further optimized by requiring the layout from the caller.
+    uint256 args[2];
+    auto& arg = args[0];
+    auto& mod = args[1];
+    mod = Curve::FIELD_PRIME;
+    arg = y;
+    result = x;
+    sp1::mulmod(result, args);
 }
 
 // Manual modular addition: (x + y) mod p
@@ -75,22 +70,17 @@ inline uint256 sp1_submod(const uint256& x, const uint256& y)
 
 std::optional<uint256> field_sqrt_sp1(const uint256& field, const uint256& x) noexcept
 {
-    // Allocate Temporaries as uint64_t[4] arrays
-    uint64_t z[4];
-    uint64_t t0[4];
-    uint64_t t1[4];
-    uint64_t t2[4];
-    uint64_t t3[4];
-
-
-    // Copy input x to uint64_t[4] format
-    auto x_arr = as_words(x);
+    uint256 z;
+    uint256 t0;
+    uint256 t1;
+    uint256 t2;
+    uint256 t3;
 
     // Step 1: z = x^0x2
-    sp1_mulmod(z, x_arr, x_arr);
+    sp1_mulmod(z, x, x);
 
     // Step 2: z = x^0x3
-    sp1_mulmod(z, x_arr, z);
+    sp1_mulmod(z, x, z);
 
     // Step 4: t0 = x^0xc
     sp1_mulmod(t0, z, z);
@@ -104,7 +94,7 @@ std::optional<uint256> field_sqrt_sp1(const uint256& field, const uint256& x) no
     sp1_mulmod(t1, t0, t0);
 
     // Step 7: t2 = x^0x1f
-    sp1_mulmod(t2, x_arr, t1);
+    sp1_mulmod(t2, x, t1);
 
     // Step 9: t1 = x^0x7c
     sp1_mulmod(t1, t2, t2);
@@ -188,16 +178,13 @@ std::optional<uint256> field_sqrt_sp1(const uint256& field, const uint256& x) no
         sp1_mulmod(z, z, z);
 
     // Verify: z^2 == x (mod p)
-    uint64_t z_squared[4];
+    uint256 z_squared;
     sp1_mulmod(z_squared, z, z);
 
-    uint256 result(z[0], z[1], z[2], z[3]);
-    uint256 z_sq_check(z_squared[0], z_squared[1], z_squared[2], z_squared[3]);
-
-    if (z_sq_check != x)
+    if (z_squared != x)
         return std::nullopt;  // Computed value is not the square root.
 
-    return result;
+    return z;
 }
 
 
@@ -209,7 +196,7 @@ std::optional<uint256> decompress(const uint256& x, bool y_parity) noexcept
 {
     static constexpr auto& Fp = Curve::Fp;
 
-    // Calculate x^3 + 7 
+    // Calculate x^3 + 7
     const auto B_regular = Fp.from_mont(B);
 
     uint256 x_squared{};
