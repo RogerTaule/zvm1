@@ -121,10 +121,10 @@ bool pairings_verify(
 }
 }  // namespace
 
-#ifdef SP1
-extern "C" bool rust_point_evaluation(const std::byte commitment[48], const std::byte z[32],
-    const std::byte y[32], const std::byte proof[48]) noexcept;
-#endif
+// NOTE: The Rust guest (guest_hypercube/src/precompiles.rs) defined rust_point_evaluation()
+// which used the bls12_381 Rust crate for KZG point evaluation, bypassing the blst C library.
+// In the pure C++ guest (som/remove-rust), that Rust symbol is unavailable, so we fall through
+// to the blst-based implementation below. This may cost more cycles but is functionally correct.
 
 bool kzg_verify_proof(const std::byte versioned_hash[VERSIONED_HASH_SIZE], const std::byte z[32],
     const std::byte y[32], const std::byte commitment[48], const std::byte proof[48]) noexcept
@@ -134,10 +134,6 @@ bool kzg_verify_proof(const std::byte versioned_hash[VERSIONED_HASH_SIZE], const
     computed_versioned_hash[0] = VERSIONED_HASH_VERSION_KZG;
     if (!std::ranges::equal(std::span{versioned_hash, 32}, computed_versioned_hash))
         return false;
-
-#ifdef SP1
-    return rust_point_evaluation(commitment, z, y, proof);
-#endif
 
     // Load and validate scalars z and y.
     // TODO(C++26): The span construction can be done as std::snap(z, std::c_<32>).
