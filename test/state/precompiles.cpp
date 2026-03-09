@@ -27,6 +27,10 @@
 #include <sp1_syscalls.hpp>
 #endif
 
+#ifdef EVMONE_PRECOMPILES_LIBSECP256K1
+#include "precompiles_libsecp256k1.hpp"
+#endif
+
 
 #ifdef EVMONE_PRECOMPILES_GMP
 #include "precompiles_gmp.hpp"
@@ -297,35 +301,85 @@ PrecompileAnalysis p256verify_analyze(bytes_view, evmc_revision) noexcept
     return {6900, 32};
 }
 
-ExecutionResult ecrecover_execute(const uint8_t* input, size_t input_size, uint8_t* output,
+namespace
+{
+class EcrecoverInput
+{
+    uint8_t buffer_[128]{};
+
+public:
+    explicit EcrecoverInput(std::span<const uint8_t> input) noexcept
+    {
+        std::copy_n(input.data(), std::min(input.size(), std::size(buffer_)), buffer_);
+    }
+
+    std::optional<std::tuple<std::span<const uint8_t, 32>, std::span<const uint8_t, 64>, bool>>
+    parse() const noexcept
+    {
+        const auto hash = std::span{buffer_}.subspan<0, 32>();
+        const auto v_bytes = std::span{buffer_}.subspan<32, 32>();
+        const auto sig_bytes = std::span{buffer_}.subspan<64, 64>();
+
+        const auto v = intx::be::unsafe::load<intx::uint256>(v_bytes.data());
+        if (v != 27 && v != 28)
+            return std::nullopt;
+        const bool parity = v == 28;
+
+        return std::tuple{hash, sig_bytes, parity};
+    }
+};
+
+}  // namespace
+
+ExecutionResult ecrecover_execute_evmone(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    // assert(output_size >= 32);
-
-    uint8_t input_buffer[128]{};
-    if (input_size != 0)
-        std::memcpy(input_buffer, input, std::min(input_size, std::size(input_buffer)));
-
-    ethash::hash256 h{};
-    std::memcpy(h.bytes, input_buffer, sizeof(h));
-
-    const auto v = intx::be::unsafe::load<intx::uint256>(input_buffer + 32);
-    if (v != 27 && v != 28)
+    const EcrecoverInput input_buffer{std::span{input, input_size}};
+    const auto o = input_buffer.parse();
+    if (!o)
         return {EVMC_SUCCESS, 0};
-    const bool parity = v == 28;
+    const auto& [hash, sig_bytes, parity] = *o;
 
-    const auto r = intx::be::unsafe::load<intx::uint256>(input_buffer + 64);
-    const auto s = intx::be::unsafe::load<intx::uint256>(input_buffer + 96);
-
-    const auto res = evmmax::secp256k1::ecrecover(h, r, s, parity);
-    if (res)
-    {
-        std::memset(output, 0, 12);
-        std::memcpy(output + 12, res->bytes, 20);
-        return {EVMC_SUCCESS, 32};
-    }
-    else
+    const auto res = evmmax::secp256k1::ecrecover(
+        hash, sig_bytes.subspan<0, 32>(), sig_bytes.subspan<32, 32>(), parity);
+    if (!res)
         return {EVMC_SUCCESS, 0};
+
+    const auto it = std::fill_n(output, 32 - sizeof(*res), 0);
+    std::copy_n(res->bytes, sizeof(*res), it);
+    return {EVMC_SUCCESS, 32};
+}
+
+#ifdef EVMONE_PRECOMPILES_LIBSECP256K1
+ExecutionResult ecrecover_execute_libsecp256k1(const uint8_t* input, size_t input_size,
+    uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
+{
+    const EcrecoverInput input_buffer{std::span{input, input_size}};
+    const auto o = input_buffer.parse();
+    if (!o)
+        return {EVMC_SUCCESS, 0};
+    const auto& [hash, sig_bytes, parity] = *o;
+
+    uint8_t pubkey[64];
+    if (!ecrecover_libsecp256k1(pubkey, hash, sig_bytes, parity))
+        return {EVMC_SUCCESS, 0};
+
+    const auto addr = evmmax::secp256k1::to_address(pubkey);
+    const auto it = std::fill_n(output, 32 - sizeof(addr), 0);
+    std::copy_n(addr.bytes, sizeof(addr), it);
+    return {EVMC_SUCCESS, 32};
+}
+#endif
+
+ExecutionResult ecrecover_execute(
+    const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size) noexcept
+{
+    assert(output_size >= 32);
+#ifdef EVMONE_PRECOMPILES_LIBSECP256K1
+    return ecrecover_execute_libsecp256k1(input, input_size, output, output_size);
+#else
+    return ecrecover_execute_evmone(input, input_size, output, output_size);
+#endif
 }
 
 ExecutionResult sha256_execute(const uint8_t* input, size_t input_size, uint8_t* output,
@@ -403,31 +457,15 @@ expmod_parse_input(
     return {base, exp, mod};
 }
 
-ExecutionResult expmod_execute(
+ExecutionResult expmod_execute_evmone(
     const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size) noexcept
 {
     const auto [base, exp, mod] = expmod_parse_input(input, input_size, output, output_size);
     if (mod.empty())
         return {EVMC_SUCCESS, output_size};
 
-    if (std::max(base.size(), mod.size()) <= MODEXP_LEN_LIMIT_EIP7823)
-    {
-        crypto::modexp(base, exp, mod, output);
-        return {EVMC_SUCCESS, output_size};
-    }
-
-    // Inputs outside EIP-7823 limits are not supported because they don't happen in practice
-    // and cannot happen after Osaka.
-    std::fill_n(output, mod.size(), 0);
-
-    // Handle just some cases from tests:
-    if (exp.size() == 1 && exp[0] == 0) // exponent is zero
-    {
-        if (!mod.empty())
-            output[mod.size() - 1] = 1;  // result is 1 mod m
-    }
-
-    return {EVMC_SUCCESS, mod.size()};
+    crypto::modexp(base, exp, mod, output);
+    return {EVMC_SUCCESS, output_size};
 }
 
 #ifdef EVMONE_PRECOMPILES_GMP
@@ -439,19 +477,25 @@ ExecutionResult expmod_execute_gmp(
         return {EVMC_SUCCESS, output_size};
 
     expmod_gmp(base, exp, mod, output);
-    return {EVMC_SUCCESS, mod.size()};
+    return {EVMC_SUCCESS, output_size};
 }
 #endif
 
+ExecutionResult expmod_execute(
+    const uint8_t* input, size_t input_size, uint8_t* output, size_t output_size) noexcept
+{
+#ifdef EVMONE_PRECOMPILES_GMP
+    return expmod_execute_gmp(input, input_size, output, output_size);
+#else
+    return expmod_execute_evmone(input, input_size, output, output_size);
+#endif
+}
+
+#if defined(SP1TURBO) || defined(SP1)
 namespace
 {
 using intx::uint256;
-#if defined(SP1TURBO) || defined(SP1)
-#ifdef SP1TURBO
-constexpr size_t SP1_BN_POINT_SIZE = 16;
-#else
-constexpr size_t SP1_BN_POINT_SIZE = 8;
-#endif
+constexpr size_t SP1_BN_POINT_SIZE = 64 / sizeof(size_t);
 static_assert(sizeof(sp1_AffinePoint) == 64, "sp1_AffinePoint must be 64 bytes");
 void sp1_bn_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
 {
@@ -512,8 +556,10 @@ void sp1_bn_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
             syscall_bn254_add(r, p);
     }
 }
-#endif
 }  // namespace
+#endif
+
+
 ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
@@ -529,25 +575,27 @@ ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* 
 
     const auto p = AffinePoint::from_bytes(input_span.subspan<0, 64>());
     const auto q = AffinePoint::from_bytes(input_span.subspan<64, 64>());
+    if (!p.has_value() || !q.has_value()) [[unlikely]]
+        return {EVMC_PRECOMPILE_FAILURE, 0};
+    if (!validate(*p) || !validate(*q)) [[unlikely]]
+        return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    if (validate(p) && validate(q))
-    {
 #if defined(SP1TURBO) || defined(SP1)
+    {
         sp1_AffinePoint sp1_p;
         sp1_AffinePoint sp1_q;
         sp1_point_from_bytes(sp1_p, input_buffer);
         sp1_point_from_bytes(sp1_q, input_buffer + 64);
         sp1_bn_add(sp1_p, sp1_q);
         sp1_point_to_bytes(output, sp1_p);
-#else
-        const auto res = evmmax::ecc::add(p, q);
-        const std::span<uint8_t, 64> output_span{output, 64};
-        res.to_bytes(output_span);
-#endif
         return {EVMC_SUCCESS, 64};
     }
-    else
-        return {EVMC_PRECOMPILE_FAILURE, 0};
+#else
+    const auto res = evmmax::ecc::add_affine(*p, *q);
+    const std::span<uint8_t, 64> output_span{output, 64};
+    res.to_bytes(output_span);
+    return {EVMC_SUCCESS, output_span.size()};
+#endif
 }
 
 ExecutionResult ecmul_execute(const uint8_t* input, size_t input_size, uint8_t* output,
@@ -564,25 +612,26 @@ ExecutionResult ecmul_execute(const uint8_t* input, size_t input_size, uint8_t* 
     using namespace evmmax::bn254;
 
     const auto p = AffinePoint::from_bytes(input_span.subspan<0, 64>());
-    const auto c = intx::be::unsafe::load<intx::uint256>(input_buffer + 64);
+    if (!p.has_value() || !validate(*p)) [[unlikely]]
+        return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    if (validate(p))
-    {
+    const auto c = intx::be::unsafe::load<uint256>(input_buffer + 64);
+
 #if defined(SP1TURBO) || defined(SP1)
+    {
         sp1_AffinePoint sp1_p;
         sp1_point_from_bytes(sp1_p, input_buffer);
         sp1_AffinePoint sp1_r;
         sp1_bn_mul(sp1_r, sp1_p, c);
         sp1_point_to_bytes(output, sp1_r);
-#else
-        const auto res = evmmax::bn254::mul(p, c);
-        const std::span<uint8_t, 64> output_span{output, 64};
-        res.to_bytes(output_span);
-#endif
         return {EVMC_SUCCESS, 64};
     }
-    else
-        return {EVMC_PRECOMPILE_FAILURE, 0};
+#else
+    const auto res = evmmax::bn254::mul(*p, c);
+    const std::span<uint8_t, 64> output_span{output, 64};
+    res.to_bytes(output_span);
+    return {EVMC_SUCCESS, output_span.size()};
+#endif
 }
 
 ExecutionResult ecpairing_execute(const uint8_t* input, size_t input_size, uint8_t* output,

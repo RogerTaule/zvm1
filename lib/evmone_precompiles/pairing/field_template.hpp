@@ -16,65 +16,6 @@ struct Fq2Config;
 
 namespace evmmax::ecc
 {
-/// Implements computations over base field defined by prime number.
-/// Wraps around ModArith struct and implements additional functions needed for pairing.
-/// It is a template struct which can be reused for different pairing implementations.
-template <typename ConfigT>
-class BaseFieldElem
-{
-    using ValueT = typename ConfigT::ValueT;
-
-    static constexpr auto Fp = ConfigT::MOD_ARITH;
-
-    ValueT m_value;
-
-public:
-    constexpr BaseFieldElem() noexcept = default;
-
-    explicit constexpr BaseFieldElem(const ValueT& v) noexcept : m_value(v) {}
-
-    static constexpr BaseFieldElem from_int(const ValueT& v) noexcept
-    {
-        return BaseFieldElem(Fp.to_mont(v));
-    }
-
-    constexpr const ValueT& value() const noexcept { return m_value; }
-
-    BaseFieldElem inv() const noexcept { return inverse(*this); }
-
-    constexpr bool is_zero() const noexcept { return m_value == 0; }
-
-    static constexpr BaseFieldElem one() noexcept { return BaseFieldElem(ConfigT::ONE); }
-
-    static constexpr BaseFieldElem zero() noexcept { return BaseFieldElem(0); }
-
-    friend constexpr BaseFieldElem operator+(
-        const BaseFieldElem& e1, const BaseFieldElem& e2) noexcept
-    {
-        return BaseFieldElem(Fp.add(e1.m_value, e2.m_value));
-    }
-
-    friend constexpr BaseFieldElem operator-(
-        const BaseFieldElem& e1, const BaseFieldElem& e2) noexcept
-    {
-        return BaseFieldElem(Fp.sub(e1.m_value, e2.m_value));
-    }
-
-    friend constexpr BaseFieldElem operator*(
-        const BaseFieldElem& e1, const BaseFieldElem& e2) noexcept
-    {
-        return BaseFieldElem(Fp.mul(e1.m_value, e2.m_value));
-    }
-
-    friend constexpr BaseFieldElem operator-(const BaseFieldElem& e) noexcept
-    {
-        return BaseFieldElem(Fp.sub(ValueT{0}, e.m_value));
-    }
-
-    friend constexpr bool operator==(
-        const BaseFieldElem& e1, const BaseFieldElem& e2) noexcept = default;
-};
-
 /// Implements extension field over the base field or other extension fields.
 /// It is a template struct which can be reused for different pairing implementations.
 template <typename ConfigT>
@@ -115,20 +56,12 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator+(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
-#ifdef SP1TURBO
+#if defined(SP1) || defined(SP1TURBO)
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
-            syscall_bn254_fp2_addmod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
-            return res;
-        }
-#elif defined(SP1)
-        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
-        {
-            auto res = e1;
-            syscall_bn254_fp2_addmod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint64_t*>(e2.coeffs.data()));
+            syscall_bn254_fp2_addmod(reinterpret_cast<size_t*>(res.coeffs.data()),
+                reinterpret_cast<const size_t*>(e2.coeffs.data()));
             return res;
         }
 #endif
@@ -141,20 +74,12 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
-#ifdef SP1TURBO
+#if defined(SP1) || defined(SP1TURBO)
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
-            syscall_bn254_fp2_submod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
-            return res;
-        }
-#elif defined(SP1)
-        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
-        {
-            auto res = e1;
-            syscall_bn254_fp2_submod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint64_t*>(e2.coeffs.data()));
+            syscall_bn254_fp2_submod(reinterpret_cast<size_t*>(res.coeffs.data()),
+                reinterpret_cast<const size_t*>(e2.coeffs.data()));
             return res;
         }
 #endif
@@ -167,20 +92,12 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator-(const ExtFieldElem& e) noexcept
     {
-#ifdef SP1TURBO
+#if defined(SP1) || defined(SP1TURBO)
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             ExtFieldElem res = {};
-            syscall_bn254_fp2_submod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint32_t*>(e.coeffs.data()));
-            return res;
-        }
-#elif defined(SP1)
-        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
-        {
-            ExtFieldElem res = {};
-            syscall_bn254_fp2_submod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint64_t*>(e.coeffs.data()));
+            syscall_bn254_fp2_submod(reinterpret_cast<size_t*>(res.coeffs.data()),
+                reinterpret_cast<const size_t*>(e.coeffs.data()));
             return res;
         }
 #endif
@@ -193,20 +110,12 @@ struct ExtFieldElem
 
     friend constexpr ExtFieldElem operator*(const ExtFieldElem& e1, const ExtFieldElem& e2) noexcept
     {
-#ifdef SP1TURBO
+#if defined(SP1) || defined(SP1TURBO)
         if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
         {
             auto res = e1;
-            syscall_bn254_fp2_mulmod(reinterpret_cast<uint32_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint32_t*>(e2.coeffs.data()));
-            return res;
-        }
-#elif defined(SP1)
-        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
-        {
-            auto res = e1;
-            syscall_bn254_fp2_mulmod(reinterpret_cast<uint64_t*>(res.coeffs.data()),
-                reinterpret_cast<const uint64_t*>(e2.coeffs.data()));
+            syscall_bn254_fp2_mulmod(reinterpret_cast<size_t*>(res.coeffs.data()),
+                reinterpret_cast<const size_t*>(e2.coeffs.data()));
             return res;
         }
 #endif
