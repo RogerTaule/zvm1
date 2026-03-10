@@ -36,7 +36,6 @@ static_assert(sizeof(BlockInfo) == 8);
 struct AdvancedExecutionState : ExecutionState
 {
     int64_t gas_left = 0;
-    int64_t gas_cost = 0;
 
     /// Pointer to the stack top.
     StackTop stack = stack_space.bottom();
