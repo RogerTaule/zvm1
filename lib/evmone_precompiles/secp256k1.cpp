@@ -270,6 +270,34 @@ constexpr sp1_AffinePoint sp1_G = {
 };
 #endif
 
+/// Add p to r, handling edge cases that SP1 syscall doesn't support:
+/// zero points (infinity) and points with the same x-coordinate.
+void sp1_secp256k1_add(sp1_AffinePoint r, const sp1_AffinePoint p) noexcept
+{
+    if (is_zero(p)) [[unlikely]]
+        return;
+    if (is_zero(r)) [[unlikely]]
+    {
+        std::copy_n(p, SP1_POINT_SIZE, r);
+        return;
+    }
+
+    const auto& rx = reinterpret_cast<const uint256&>(r[0]);
+    const auto& px = reinterpret_cast<const uint256&>(p[0]);
+    if (rx == px) [[unlikely]]
+    {
+        const auto& ry = reinterpret_cast<const uint256&>(r[SP1_POINT_SIZE / 2]);
+        const auto& py = reinterpret_cast<const uint256&>(p[SP1_POINT_SIZE / 2]);
+        if (ry == py)
+            syscall_secp256k1_double(r);
+        else  // r == -p
+            std::fill_n(r, SP1_POINT_SIZE, 0);
+        return;
+    }
+
+    syscall_secp256k1_add(r, p);
+}
+
 void sp1_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
 {
     std::fill_n(r, SP1_POINT_SIZE, 0);
@@ -389,23 +417,10 @@ std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
 
     sp1_AffinePoint sp1_Q;
     std::copy_n(sp1_T1, SP1_POINT_SIZE, sp1_Q);
+    sp1_secp256k1_add(sp1_Q, sp1_T2);
 
-    const auto& t1x = *(const uint256*)&sp1_Q[0];
-    const auto& t1y = *(const uint256*)&sp1_Q[SP1_POINT_SIZE / 2];
-    const auto& t2x = *(const uint256*)&sp1_T2[0];
-    const auto& t2y = *(const uint256*)&sp1_T2[SP1_POINT_SIZE / 2];
-
-    if (t1x == t2x) [[unlikely]]
-    {
-        if (t1y == t2y)
-            syscall_secp256k1_double(sp1_Q);
-        else if (t1y == Curve::FIELD_PRIME - t2y)
-            return std::nullopt;
-    }
-    else
-    {
-        syscall_secp256k1_add(sp1_Q, sp1_T2);
-    }
+    if (is_zero(sp1_Q)) [[unlikely]]
+        return std::nullopt;
 
     uint8_t serialized[64];
     sp1_point_to_bytes(serialized, sp1_Q);
