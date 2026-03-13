@@ -18,6 +18,16 @@ else()
     endif()
 
     set(BLST_BUILD_SCRIPT ./build.sh CC='${BLST_CC}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}')
+
+    # SP1 BLS12-381 syscall patching: apply patch script and add define to CC flags.
+    set(BLST_PATCH_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/patch_blst_sp1.sh")
+    if(SP1 AND EXISTS "${BLST_PATCH_SCRIPT}")
+        set(BLST_PATCH_COMMAND sh ${BLST_PATCH_SCRIPT})
+        set(BLST_CC "${BLST_CC} -DSP1_BLS12381_SYSCALLS")
+        set(BLST_BUILD_SCRIPT ./build.sh CC='${BLST_CC}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}')
+    else()
+        set(BLST_PATCH_COMMAND "")
+    endif()
 endif()
 
 ExternalProject_Add(
@@ -27,6 +37,7 @@ ExternalProject_Add(
     URL https://github.com/supranational/blst/archive/refs/tags/v0.3.15.tar.gz
     URL_HASH SHA256=9e503ff6b50e044efb075d260c81c751702b3ed6f2e45394b0833834e71c3afa
     DOWNLOAD_NO_PROGRESS TRUE
+    PATCH_COMMAND ${BLST_PATCH_COMMAND}
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${BLST_BUILD_SCRIPT}
     BUILD_IN_SOURCE TRUE
