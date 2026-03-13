@@ -7,7 +7,13 @@
 #ifdef SP1TURBO
 void syscall_keccak_permute(uint64_t (*state)[25]);
 #elif defined(SP1)
-void syscall_keccak_permute(uint64_t state[25]);
+static inline __attribute__((always_inline)) void syscall_keccak_permute(uint64_t state[25])
+{
+    register uint64_t t0 asm("t0") = 0x00010109;
+    register uint64_t* a0 asm("a0") = state;
+    register uint64_t a1 asm("a1") = 0;
+    asm volatile("ecall" : "+r"(t0) : "r"(a0), "r"(a1) : "memory");
+}
 #endif
 
 // Provide __has_attribute macro if not defined.
