@@ -149,12 +149,21 @@ with open(path) as f:
 decls = r"""
 /* ── SP1 BLS12-381 syscall acceleration ── */
 #ifdef SP1_BLS12381_SYSCALLS
-extern void syscall_bls12381_fp_addmod(unsigned long long *p, const unsigned long long *q);
-extern void syscall_bls12381_fp_submod(unsigned long long *p, const unsigned long long *q);
-extern void syscall_bls12381_fp_mulmod(unsigned long long *p, const unsigned long long *q);
-extern void syscall_bls12381_fp2_addmod(unsigned long long *p, const unsigned long long *q);
-extern void syscall_bls12381_fp2_submod(unsigned long long *p, const unsigned long long *q);
-extern void syscall_bls12381_fp2_mulmod(unsigned long long *p, const unsigned long long *q);
+/* Inline ecalls: bypass Rust wrappers, emit ecall directly. */
+#define _SP1_ECALL_FP(name, num)                                        \
+    static inline __attribute__((always_inline)) void name(             \
+        unsigned long long *_p, const unsigned long long *_q) {         \
+        register unsigned long long t0 __asm__("t0") = (num);          \
+        register unsigned long long *a0 __asm__("a0") = _p;            \
+        register const unsigned long long *a1 __asm__("a1") = _q;      \
+        __asm__ volatile("ecall" : "+r"(t0) : "r"(a0), "r"(a1) : "memory"); \
+    }
+_SP1_ECALL_FP(syscall_bls12381_fp_addmod,  0x00010120)
+_SP1_ECALL_FP(syscall_bls12381_fp_submod,  0x00010121)
+_SP1_ECALL_FP(syscall_bls12381_fp_mulmod,  0x00010122)
+_SP1_ECALL_FP(syscall_bls12381_fp2_addmod, 0x00010123)
+_SP1_ECALL_FP(syscall_bls12381_fp2_submod, 0x00010124)
+_SP1_ECALL_FP(syscall_bls12381_fp2_mulmod, 0x00010125)
 
 /* R_INV = (2^384)^{-1} mod P, stored as limb_t[6] (natively 8-byte aligned on rv64). */
 static const unsigned long long _SP1_FP_R_INV[6] = {
@@ -329,8 +338,6 @@ with open(path) as f:
 
 sp1_mul_sqr_384 = r"""/* SP1-patched: mul_mont_384 and sqr_mont_384 via syscalls (aliasing-aware) */
 #ifdef SP1_BLS12381_SYSCALLS
-extern void syscall_bls12381_fp_mulmod(unsigned long long *p, const unsigned long long *q);
-
 static const unsigned long long _sp1_no_asm_R_INV[6] = {
     0xf4d38259380b4820ULL, 0x7fe11274d898fafbULL, 0x343ea97914956dc8ULL,
     0x1797ab1458a88de9ULL, 0xed5e64273c4f538bULL, 0x14fec701e8fb0ce9ULL
@@ -387,7 +394,6 @@ src = src.replace('MUL_MONT_IMPL(384)', sp1_mul_sqr_384, 1)
 old_add_384 = 'ADD_MOD_IMPL(384)'
 new_add_384 = r"""/* SP1-patched: add_mod_384 via syscall (BLS12-381 only) */
 #ifdef SP1_BLS12381_SYSCALLS
-extern void syscall_bls12381_fp_addmod(unsigned long long *p, const unsigned long long *q);
 inline void add_mod_384(vec384 ret, const vec384 a, const vec384 b, const vec384 p)
 {
     (void)p;
@@ -412,7 +418,6 @@ print("Patched add_mod_384 with syscall")
 old_sub_384 = 'SUB_MOD_IMPL(384)'
 new_sub_384 = r"""/* SP1-patched: sub_mod_384 via syscall (BLS12-381 only) */
 #ifdef SP1_BLS12381_SYSCALLS
-extern void syscall_bls12381_fp_submod(unsigned long long *p, const unsigned long long *q);
 inline void sub_mod_384(vec384 ret, const vec384 a, const vec384 b, const vec384 p)
 {
     (void)p;
@@ -549,7 +554,6 @@ new_mul_384x = """void mul_mont_384x(vec384x ret, const vec384x a, const vec384x
 {
 #ifdef SP1_BLS12381_SYSCALLS
     (void)p; (void)n0;
-    extern void syscall_bls12381_fp2_mulmod(unsigned long long *p, const unsigned long long *q);
     static const unsigned long long fp2_r_inv[12] = {
         0xf4d38259380b4820ULL, 0x7fe11274d898fafbULL, 0x343ea97914956dc8ULL,
         0x1797ab1458a88de9ULL, 0xed5e64273c4f538bULL, 0x14fec701e8fb0ce9ULL,
@@ -653,7 +657,6 @@ new_sqr_382x = '''void sqr_mont_382x(vec384x ret, const vec384x a,
 {
 #ifdef SP1_BLS12381_SYSCALLS
     (void)p; (void)n0;
-    extern void syscall_bls12381_fp2_mulmod(unsigned long long *p, const unsigned long long *q);
     static const unsigned long long fp2_r_inv[12] = {
         0xf4d38259380b4820ULL, 0x7fe11274d898fafbULL, 0x343ea97914956dc8ULL,
         0x1797ab1458a88de9ULL, 0xed5e64273c4f538bULL, 0x14fec701e8fb0ce9ULL,
@@ -743,7 +746,6 @@ else:
 old_cneg_384 = 'CNEG_MOD_IMPL(384)'
 new_cneg_384 = r"""/* SP1-patched: cneg_mod_384 via sub_mod syscall */
 #ifdef SP1_BLS12381_SYSCALLS
-extern void syscall_bls12381_fp_submod(unsigned long long *p, const unsigned long long *q);
 inline void cneg_mod_384(vec384 ret, const vec384 a, bool_t flag, const vec384 p)
 {
     (void)p;
