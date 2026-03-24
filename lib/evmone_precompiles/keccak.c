@@ -4,6 +4,18 @@
 
 #include "keccak.h"
 
+#ifdef SP1TURBO
+void syscall_keccak_permute(uint64_t (*state)[25]);
+#elif defined(SP1)
+static inline __attribute__((always_inline)) void syscall_keccak_permute(uint64_t state[25])
+{
+    register uint64_t t0 asm("t0") = 0x00010109;
+    register uint64_t* a0 asm("a0") = state;
+    register uint64_t a1 asm("a1") = 0;
+    asm volatile("ecall" : "+r"(t0) : "r"(a0), "r"(a1) : "memory");
+}
+#endif
+
 // Provide __has_attribute macro if not defined.
 #ifndef __has_attribute
 #define __has_attribute(name) 0
@@ -293,7 +305,13 @@ static void keccakf1600_generic(uint64_t state[25])
 
 /// The pointer to the best Keccak-f[1600] function implementation,
 /// selected during runtime initialization.
-static void (*keccakf1600_best)(uint64_t[25]) = keccakf1600_generic;
+#if defined(SP1TURBO) || defined(SP1)
+#define DEFAULT_keccakf1600 syscall_keccak_permute
+#else
+#define DEFAULT_keccakf1600 keccakf1600_generic
+#endif
+
+static void (*keccakf1600_best)(uint64_t[25]) = DEFAULT_keccakf1600;
 
 
 #if !defined(_MSC_VER) && defined(__x86_64__) && __has_attribute(target)

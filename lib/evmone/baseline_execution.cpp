@@ -326,7 +326,7 @@ evmc_result execute(VM& vm, const evmc_host_interface& host, evmc_host_context* 
     const auto gas_refund = (state.status == EVMC_SUCCESS) ? state.gas_refund : 0;
 
     assert(state.output_size != 0 || state.output_offset == 0);
-    const auto result = evmc::make_result(state.status, gas_left, gas_refund, 0,
+    const auto result = evmc::make_result(state.status, gas_left, gas_refund,
         state.output_size != 0 ? &state.memory[state.output_offset] : nullptr, state.output_size);
 
     if (INTX_UNLIKELY(tracer != nullptr))

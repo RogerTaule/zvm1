@@ -9,6 +9,10 @@
 #include "instructions_xmacro.hpp"
 #include <evmone_precompiles/keccak.hpp>
 
+#ifdef SP1
+#include <sp1_syscalls.hpp>
+#endif
+
 namespace evmone
 {
 using code_iterator = const uint8_t*;
@@ -201,18 +205,60 @@ inline void smod(StackTop stack) noexcept
 
 inline void addmod(StackTop stack) noexcept
 {
-    const auto& x = stack.pop();
-    const auto& y = stack.pop();
+    auto& x = stack.pop();
+    auto& y = stack.pop();
     auto& m = stack.top();
-    m = m != 0 ? intx::addmod(x, y, m) : 0;
+
+    if (m == 0) [[unlikely]]
+    {
+        m = 0;
+        return;
+    }
+
+#if defined(SP1TURBO) || defined(SP1)
+    auto [sum, carry] = intx::addc(x, y);
+    x = m;
+    m = sum;
+    y = 1;
+    sp1::mulmod(m, std::span<const uint256, 2>{&y, 2});
+
+    if (carry)
+    {
+        auto s = m;
+        m = uint256{1} << 128;
+        y = m;
+        sp1::mulmod(m, std::span<const uint256, 2>{&y, 2});
+        m += s;
+        if (m >= x)  // TODO: untested.
+            m -= x;
+    }
+#else
+    m = intx::addmod(x, y, m);
+#endif
 }
 
 inline void mulmod(StackTop stack) noexcept
 {
-    const auto& x = stack[0];
+    auto& x = stack[0];
     const auto& y = stack[1];
     auto& m = stack[2];
-    m = m != 0 ? intx::mulmod(x, y, m) : 0;
+
+    if (m == 0) [[unlikely]]
+    {
+        m = 0;
+        return;
+    }
+
+#if defined(SP1TURBO) || defined(SP1)
+    // SP1 syscall expects &x and &(y || m).
+    // Because the EVM stack grows downwards, we start with m, y, x.
+    // So swap to get x, y, m.
+    std::swap(x, m);
+    // The result will be in the &m position (now containing x) as expected by EVM.
+    sp1::mulmod(m, std::span<const uint256, 2>{&y, 2});
+#else
+    m = intx::mulmod(x, y, m);
+#endif
 }
 
 inline Result exp(StackTop stack, int64_t gas_left, ExecutionState& state) noexcept
@@ -267,35 +313,35 @@ inline void signextend(StackTop stack) noexcept
 inline void lt(StackTop stack) noexcept
 {
     const auto& x = stack.pop();
-    stack[0] = x < stack[0];
+    stack[0] = uint64_t{x < stack[0]};
 }
 
 inline void gt(StackTop stack) noexcept
 {
     const auto& x = stack.pop();
-    stack[0] = stack[0] < x;  // Arguments are swapped and < is used.
+    stack[0] = uint64_t{stack[0] < x};  // Arguments are swapped and < is used.
 }
 
 inline void slt(StackTop stack) noexcept
 {
     const auto& x = stack.pop();
-    stack[0] = slt(x, stack[0]);
+    stack[0] = uint64_t{slt(x, stack[0])};
 }
 
 inline void sgt(StackTop stack) noexcept
 {
     const auto& x = stack.pop();
-    stack[0] = slt(stack[0], x);  // Arguments are swapped and SLT is used.
+    stack[0] = uint64_t{slt(stack[0], x)};  // Arguments are swapped and SLT is used.
 }
 
 inline void eq(StackTop stack) noexcept
 {
-    stack[1] = stack[0] == stack[1];
+    stack[1] = uint64_t{stack[0] == stack[1]};
 }
 
 inline void iszero(StackTop stack) noexcept
 {
-    stack.top() = stack.top() == 0;
+    stack.top() = uint64_t{stack.top() == 0};
 }
 
 inline void and_(StackTop stack) noexcept

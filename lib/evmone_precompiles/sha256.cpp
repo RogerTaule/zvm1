@@ -15,6 +15,11 @@
 #include <cstdint>
 #include <cstring>
 
+#ifdef SP1
+#include <sp1_syscalls.hpp>
+#endif
+
+
 #if defined(__x86_64__)  // NOLINT(readability-use-concise-preprocessor-directives)
 
 #include <cpuid.h>
@@ -162,14 +167,41 @@ static bool calc_chunk(uint8_t chunk[CHUNK_SIZE], struct BufferState* state)
         unsigned i = 0;
         unsigned j = 0;
 
+        const uint8_t* p = chunk;
+
+#ifdef SP1TURBO
+        uint32_t w[64];
+        for (j = 0; j < 16; j++)
+        {
+            w[j] =
+                (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];
+            p += 4;
+        }
+        syscall_sha256_extend(w);
+        syscall_sha256_compress(w, h);
+#elif defined(SP1)
+        uint64_t w[64];
+        uint64_t h_sp1[8];
+        for (j = 0; j < 8; j++)
+            h_sp1[j] = h[j];
+        for (j = 0; j < 16; j++)
+        {
+            w[j] =
+                (uint64_t)p[0] << 24 | (uint64_t)p[1] << 16 | (uint64_t)p[2] << 8 | (uint64_t)p[3];
+            p += 4;
+        }
+        syscall_sha256_extend(w);
+        syscall_sha256_compress(w, h_sp1);
+        for (j = 0; j < 8; j++)
+            h[j] = static_cast<uint32_t>(h_sp1[j]);
+#else
+
         uint32_t ah[8];
         /* Initialize working variables to current hash value: */
         for (i = 0; i < 8; i++)
         {
             ah[i] = h[i];
         }
-
-        const uint8_t* p = chunk;
 
         /*
          * The w-array is really w[64], but since we only need 16 of them at a time, we save stack
@@ -233,6 +265,7 @@ static bool calc_chunk(uint8_t chunk[CHUNK_SIZE], struct BufferState* state)
         {
             h[i] += ah[i];
         }
+#endif
     }
 }
 
