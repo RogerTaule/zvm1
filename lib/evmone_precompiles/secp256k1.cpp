@@ -484,6 +484,43 @@ std::optional<Curve::Fp> zisk_calculate_y(const Curve::Fp& x, bool y_parity) noe
     const auto candidate_parity = (y_mont.value()[0] & 1) != 0;
     return (candidate_parity == y_parity) ? y_mont : -y_mont;
 }
+
+// Hint a modular inverse in the scalar field Fn via Zisk's fcall_secp256k1_fn_inv
+// (FCALL_SECP256K1_FN_INV_ID = 2). Returns 4 u64s (the inverse) with no
+// exists flag (it's caller's job to ensure input != 0). Verify by checking
+// `input * inv ≡ 1 (mod n)` with one Fr multiplication.
+inline uint256 zisk_fcall_secp256k1_fn_inv(const uint256& input) noexcept
+{
+    asm volatile("csrs 0x8F2, %0" : : "r"(&input) : "memory");
+    asm volatile("csrwi 0x8C0, 2");
+
+    uint256 result;
+    uint64_t v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[0] = v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[1] = v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[2] = v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[3] = v;
+    return result;
+}
+
+// Verify-on-hint scalar-field inverse: replaces evmone's Fermat-based
+// `1 / r_fr` (~10 k rv64 steps) with a single fcall + one Fr mul check.
+// Caller must guarantee `v != 0` (already validated upstream in ecrecover).
+inline Curve::Fr zisk_fn_inv(const Curve::Fr& v) noexcept
+{
+    const auto inv_std = zisk_fcall_secp256k1_fn_inv(v.value());
+    const auto inv_fr = Curve::Fr{inv_std};
+    // Verify: v * inv == 1.
+    if (v * inv_fr != Curve::Fr{1}) [[unlikely]]
+    {
+        // Hint was wrong — this shouldn't happen with a correct prover. The
+        // best we can do here is bail out; return an invalid value that the
+        // downstream u1/u2 computation will pollute, which the recovery's
+        // final on-curve check will catch.
+        return Curve::Fr{0};
+    }
+    return inv_fr;
+}
 }  // namespace
 #endif
 
@@ -611,9 +648,11 @@ std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
     const auto& r_fr = *opt_r;
     const auto& s_fr = *opt_s;
 
-    // z, u1 = −z·r⁻¹, u2 = s·r⁻¹ (all in Fr).
+    // z, u1 = −z·r⁻¹, u2 = s·r⁻¹ (all in Fr). r_inv hinted via fcall
+    // (FCALL_SECP256K1_FN_INV_ID = 2) and verified with one Fr multiplication,
+    // replacing the Fermat-based inversion that costs ~10 k steps.
     const auto z = Curve::Fr{intx::be::unsafe::load<uint256>(hash.data())};
-    const auto r_inv = 1 / r_fr;
+    const auto r_inv = zisk_fn_inv(r_fr);
     const auto u1 = (-z * r_inv).value();
     const auto u2 = (s_fr * r_inv).value();
 
