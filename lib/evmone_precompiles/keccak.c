@@ -14,6 +14,10 @@ static inline __attribute__((always_inline)) void syscall_keccak_permute(uint64_
     register uint64_t a1 asm("a1") = 0;
     asm volatile("ecall" : "+r"(t0) : "r"(a0), "r"(a1) : "memory");
 }
+#elif defined(ZISK)
+/* Defined in prover/guest_zisk/precompiles/zisk_keccak.cpp. Issues the
+ * Zisk keccak_f CSR syscall (id 0x800) on the 25-u64 state in place. */
+void syscall_keccak_permute(uint64_t state[25]);
 #endif
 
 // Provide __has_attribute macro if not defined.
@@ -305,7 +309,7 @@ static void keccakf1600_generic(uint64_t state[25])
 
 /// The pointer to the best Keccak-f[1600] function implementation,
 /// selected during runtime initialization.
-#if defined(SP1TURBO) || defined(SP1)
+#if defined(SP1TURBO) || defined(SP1) || defined(ZISK)
 #define DEFAULT_keccakf1600 syscall_keccak_permute
 #else
 #define DEFAULT_keccakf1600 keccakf1600_generic
