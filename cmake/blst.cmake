@@ -19,11 +19,19 @@ else()
 
     set(BLST_BUILD_SCRIPT ./build.sh CC='${BLST_CC}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}')
 
-    # SP1 BLS12-381 syscall patching: apply patch script and add define to CC flags.
+    # SP1 / ZISK BLS12-381 syscall patching: apply patch script and add define to CC flags.
     set(BLST_PATCH_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/patch_blst_sp1.sh")
+    set(BLST_PATCH_SCRIPT_ZISK "${CMAKE_CURRENT_LIST_DIR}/patch_blst_zisk.sh")
     if(SP1 AND EXISTS "${BLST_PATCH_SCRIPT}")
         set(BLST_PATCH_COMMAND sh ${BLST_PATCH_SCRIPT})
         set(BLST_CC "${BLST_CC} -DSP1_BLS12381_SYSCALLS")
+        set(BLST_BUILD_SCRIPT ./build.sh CC='${BLST_CC}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}')
+    elseif(ZISK AND EXISTS "${BLST_PATCH_SCRIPT_ZISK}")
+        # Mirror of SP1's three-phase patch but using Zisk CSR-based syscalls:
+        #   Fp ops  → ARITH384_MOD (CSR 0x80B)
+        #   Fp2 ops → BLS12_381_COMPLEX_ADD/SUB/MUL (CSR 0x80E/F/810)
+        set(BLST_PATCH_COMMAND sh ${BLST_PATCH_SCRIPT_ZISK})
+        set(BLST_CC "${BLST_CC} -DZISK_BLS12381_SYSCALLS")
         set(BLST_BUILD_SCRIPT ./build.sh CC='${BLST_CC}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}')
     else()
         set(BLST_PATCH_COMMAND "")
