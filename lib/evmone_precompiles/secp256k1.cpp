@@ -426,6 +426,64 @@ void zisk_point_to_bytes(uint8_t out[64], const ZiskPoint256& pt) noexcept
     intx::be::unsafe::store(&out[0], x);
     intx::be::unsafe::store(&out[32], y);
 }
+
+// ─── fcall (free-input call) protocol ────────────────────────────────
+//
+// Free-input calls let the prover hint the result of an expensive
+// computation; the guest VERIFIES the hint with much cheaper math. For
+// modular square root this is huge — the portable Fermat-based sqrt is
+// ~253 squarings + ~13 multiplications in Fp, whereas verifying a
+// hinted sqrt is just one squaring + one compare.
+//
+// Protocol (from ziskos/.../fcall.rs macros):
+//   * Push parameter:  csrs 0x8F0+i, <ptr>     (i = words_to_port table)
+//                      for 4-u64 (32-byte) inputs, port = 0x8F2.
+//   * Trigger fcall:   csrwi 0x8C0+(id>>5), id&0x1f
+//                      for FCALL_SECP256K1_FP_SQRT_ID = 3 → csrwi 0x8C0, 3.
+//   * Read each result u64: csrr <reg>, 0xFFE.
+//
+// fp_sqrt returns 5 u64s: [exists_flag, sqrt[0], sqrt[1], sqrt[2], sqrt[3]].
+
+inline std::optional<uint256> zisk_fcall_secp256k1_fp_sqrt(const uint256& input) noexcept
+{
+    // Push input pointer for a 4-u64 parameter (port 0x8F0+2=0x8F2).
+    asm volatile("csrs 0x8F2, %0" : : "r"(&input) : "memory");
+    // Trigger the fcall (FCALL_SECP256K1_FP_SQRT_ID = 3).
+    asm volatile("csrwi 0x8C0, 3");
+
+    uint64_t exists;
+    asm volatile("csrr %0, 0xFFE" : "=r"(exists));
+    if (!exists)
+        return std::nullopt;
+
+    uint256 result;
+    uint64_t v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[0] = v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[1] = v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[2] = v;
+    asm volatile("csrr %0, 0xFFE" : "=r"(v)); result[3] = v;
+    return result;
+}
+
+// Verify-on-hint Fp square root replacement for the portable field_sqrt /
+// calculate_y combo. We compute `x³ + 7` via evmone's Montgomery Fp (cheap
+// per multiplication), unwrap to standard form for the fcall, then verify
+// the hinted sqrt by squaring once in Fp.
+std::optional<Curve::Fp> zisk_calculate_y(const Curve::Fp& x, bool y_parity) noexcept
+{
+    const auto y_squared = x * x * x + B;             // Fp arith, ~3 muls
+    const auto y_std_opt = zisk_fcall_secp256k1_fp_sqrt(y_squared.value());
+    if (!y_std_opt.has_value())
+        return std::nullopt;
+
+    const auto y_mont = Curve::Fp{*y_std_opt};
+    // Verify the hint: y² ≡ x³ + 7 (mod p).
+    if (y_mont * y_mont != y_squared) [[unlikely]]
+        return std::nullopt;
+
+    const auto candidate_parity = (y_mont.value()[0] & 1) != 0;
+    return (candidate_parity == y_parity) ? y_mont : -y_mont;
+}
 }  // namespace
 #endif
 
@@ -561,12 +619,12 @@ std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
 
     const auto r_val = r_fr.value();
 
-    // Decompress R = (r, y) on the curve using the portable lift_x. Note that
-    // calculate_y() works with Fp values in Montgomery form; we lift r_val to
-    // Fp{r_val} and unwrap the result with .value() to get the standard-form
-    // 256-bit integer that Zisk's syscall expects.
+    // Decompress R = (r, y) on the curve. zisk_calculate_y hints the modular
+    // square root via fcall (FCALL_SECP256K1_FP_SQRT_ID = 3) and verifies the
+    // hint with a single Fp squaring, replacing the ~253-squaring portable
+    // Fermat-based field_sqrt. Saves ~10 k steps per ecrecover call.
     const auto r_mont = Curve::Fp{r_val};
-    const auto y_opt = calculate_y(r_mont, parity);
+    const auto y_opt = zisk_calculate_y(r_mont, parity);
     if (!y_opt.has_value())
         return std::nullopt;
     const auto y_val = (*y_opt).value();
