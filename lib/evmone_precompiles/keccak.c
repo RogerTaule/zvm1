@@ -15,9 +15,14 @@ static inline __attribute__((always_inline)) void syscall_keccak_permute(uint64_
     asm volatile("ecall" : "+r"(t0) : "r"(a0), "r"(a1) : "memory");
 }
 #elif defined(ZISK)
-/* Defined in prover/guest_zisk/precompiles/zisk_keccak.cpp. Issues the
- * Zisk keccak_f CSR syscall (id 0x800) on the 25-u64 state in place. */
-void syscall_keccak_permute(uint64_t state[25]);
+/* Issue Zisk's keccak_f CSR syscall (id 0x800) on the 25-u64 state in
+ * place. Inlined here so every call site emits a single `csrs` insn —
+ * no jalr-through-function-pointer overhead like the generic dispatch.
+ * Mirrors the SP1 ecall-based inline above. */
+static inline __attribute__((always_inline)) void syscall_keccak_permute(uint64_t state[25])
+{
+    asm volatile("csrs 0x800, %0" : : "r"(state) : "memory");
+}
 #endif
 
 // Provide __has_attribute macro if not defined.
@@ -315,7 +320,16 @@ static void keccakf1600_generic(uint64_t state[25])
 #define DEFAULT_keccakf1600 keccakf1600_generic
 #endif
 
+#if defined(ZISK)
+/* Skip the function-pointer indirection entirely on ZISK: the syscall
+ * is always available and inlines down to a single `csrs` instruction.
+ * Routing every keccak() call through a static function pointer would
+ * cost a load + jalr + ret per call (~5-7 insns of overhead) for no
+ * runtime-selection benefit. */
+#define keccakf1600_best syscall_keccak_permute
+#else
 static void (*keccakf1600_best)(uint64_t[25]) = DEFAULT_keccakf1600;
+#endif
 
 
 #if !defined(_MSC_VER) && defined(__x86_64__) && __has_attribute(target)
