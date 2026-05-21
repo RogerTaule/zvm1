@@ -10,6 +10,86 @@
 #include <sp1_syscalls.hpp>
 #endif
 
+#ifdef ZISK
+/* ZISK bn254 syscall ABI mirror — parallel to SP1's sp1_syscalls.hpp.
+ *
+ * Same two-pointer in-place semantics SP1 uses (p ←  op(p, q)) so the
+ * existing call sites below need only swap their `#if defined SP1 || …`
+ * gates for an `#elif defined(ZISK)` branch.
+ *
+ *   Fp ops  → ARITH256_MOD (CSR 0x802) with the bn254 base-field prime
+ *             P encoded as four little-endian u64 limbs. The same
+ *             SyscallArith256ModParams struct from intx is reused.
+ *   Fp2 ops → BN254_COMPLEX_ADD/SUB/MUL (CSR 0x808/0x809/0x80A) using
+ *             the {f1:&mut, f2:&const} two-pointer ABI matching Rust's
+ *             SyscallBn254Complex*Params.
+ */
+namespace evmmax_zisk_bn254
+{
+/* bn254 base-field prime (little-endian u64 limbs):
+   P = 0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47 */
+inline constexpr unsigned long long P[4] = {
+    0x3c208c16d87cfd47ULL, 0x97816a916871ca8dULL,
+    0xb85045b68181585dULL, 0x30644e72e131a029ULL
+};
+/* P - 1 — used to express subtraction as (P-1)·b + a ≡ -b + a (mod P). */
+inline constexpr unsigned long long P_MINUS_1[4] = {
+    0x3c208c16d87cfd46ULL, 0x97816a916871ca8dULL,
+    0xb85045b68181585dULL, 0x30644e72e131a029ULL
+};
+inline constexpr unsigned long long ONE[4]  = {1, 0, 0, 0};
+inline constexpr unsigned long long ZERO[4] = {0, 0, 0, 0};
+
+struct Arith256ModParams {
+    const unsigned long long* a;
+    const unsigned long long* b;
+    const unsigned long long* c;
+    const unsigned long long* module_;
+    unsigned long long*       d;
+};
+struct ComplexParams {
+    void*       f1;
+    const void* f2;
+};
+
+/* p ←  (1·p + q) mod P */
+inline __attribute__((always_inline)) void
+syscall_bn254_fp_addmod(unsigned long long* p, const unsigned long long* q) {
+    Arith256ModParams params = { ONE, p, q, P, p };
+    __asm__ volatile("csrs 0x802, %0" : : "r"(&params) : "memory");
+}
+/* p ←  ((P-1)·q + p) mod P = (p - q) mod P */
+inline __attribute__((always_inline)) void
+syscall_bn254_fp_submod(unsigned long long* p, const unsigned long long* q) {
+    Arith256ModParams params = { P_MINUS_1, q, p, P, p };
+    __asm__ volatile("csrs 0x802, %0" : : "r"(&params) : "memory");
+}
+/* p ←  (p·q + 0) mod P */
+inline __attribute__((always_inline)) void
+syscall_bn254_fp_mulmod(unsigned long long* p, const unsigned long long* q) {
+    Arith256ModParams params = { p, q, ZERO, P, p };
+    __asm__ volatile("csrs 0x802, %0" : : "r"(&params) : "memory");
+}
+
+/* Fp2 ops use dedicated bn254 syscalls (csrs 0x808/0x809/0x80A). */
+inline __attribute__((always_inline)) void
+syscall_bn254_fp2_addmod(unsigned long long* p, const unsigned long long* q) {
+    ComplexParams params = { p, q };
+    __asm__ volatile("csrs 0x808, %0" : : "r"(&params) : "memory");
+}
+inline __attribute__((always_inline)) void
+syscall_bn254_fp2_submod(unsigned long long* p, const unsigned long long* q) {
+    ComplexParams params = { p, q };
+    __asm__ volatile("csrs 0x809, %0" : : "r"(&params) : "memory");
+}
+inline __attribute__((always_inline)) void
+syscall_bn254_fp2_mulmod(unsigned long long* p, const unsigned long long* q) {
+    ComplexParams params = { p, q };
+    __asm__ volatile("csrs 0x80a, %0" : : "r"(&params) : "memory");
+}
+}  // namespace evmmax_zisk_bn254
+#endif
+
 namespace evmmax
 {
 /// Compute the modular inverse of the number modulo 2³²: inv⋅a = 1 mod 2³².
@@ -86,7 +166,9 @@ class ModArith
 public:
     constexpr explicit ModArith(const UintT& mod) noexcept
       : mod_{mod},
-#if defined SP1 || defined SP1TURBO
+#if defined SP1 || defined SP1TURBO || defined ZISK
+        /* In BN-accelerated mode the syscalls operate on PLAIN modular form
+         * (not Montgomery), so the Montgomery constants degenerate to no-ops. */
         r_squared_{BN ? 1 : compute_r_squared(mod)},
         mod_inv_{BN ? 0 : compute_mont_mod_inv(mod)}
 #else
@@ -104,7 +186,7 @@ public:
     /// what gives aR²R⁻¹ % mod = aR % mod.
     constexpr UintT to_mont(const UintT& x) const noexcept
     {
-#if defined SP1 || defined SP1TURBO
+#if defined SP1 || defined SP1TURBO || defined ZISK
         if constexpr (BN)
             return x;
         else
@@ -118,7 +200,7 @@ public:
     /// Montgomery multiplication mul(x, 1) what gives aRR⁻¹ % mod = a % mod.
     constexpr UintT from_mont(const UintT& x) const noexcept
     {
-#if defined SP1 || defined SP1TURBO
+#if defined SP1 || defined SP1TURBO || defined ZISK
         if constexpr (BN)
             return x;
         else
@@ -139,6 +221,15 @@ public:
             UintT res = x;
             syscall_bn254_fp_mulmod(
                 reinterpret_cast<size_t*>(&res), reinterpret_cast<const size_t*>(&y));
+            return res;
+        }
+#elif defined(ZISK)
+        if constexpr (BN)
+        {
+            UintT res = x;
+            evmmax_zisk_bn254::syscall_bn254_fp_mulmod(
+                reinterpret_cast<unsigned long long*>(&res),
+                reinterpret_cast<const unsigned long long*>(&y));
             return res;
         }
 #endif
@@ -190,6 +281,15 @@ public:
                 reinterpret_cast<size_t*>(&res), reinterpret_cast<const size_t*>(&y));
             return res;
         }
+#elif defined(ZISK)
+        if constexpr (BN)
+        {
+            UintT res = x;
+            evmmax_zisk_bn254::syscall_bn254_fp_addmod(
+                reinterpret_cast<unsigned long long*>(&res),
+                reinterpret_cast<const unsigned long long*>(&y));
+            return res;
+        }
 #endif
 
         const auto s = addc(x, y);  // TODO: cannot overflow if modulus is sparse (e.g. 255 bits).
@@ -207,6 +307,15 @@ public:
             UintT res = x;
             syscall_bn254_fp_submod(
                 reinterpret_cast<size_t*>(&res), reinterpret_cast<const size_t*>(&y));
+            return res;
+        }
+#elif defined(ZISK)
+        if constexpr (BN)
+        {
+            UintT res = x;
+            evmmax_zisk_bn254::syscall_bn254_fp_submod(
+                reinterpret_cast<unsigned long long*>(&res),
+                reinterpret_cast<const unsigned long long*>(&y));
             return res;
         }
 #endif

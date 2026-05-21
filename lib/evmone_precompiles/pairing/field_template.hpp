@@ -9,6 +9,12 @@
 #include <sp1_syscalls.hpp>
 #endif
 
+#ifdef ZISK
+/* The ZISK bn254 syscall helpers live in evmmax.hpp's evmmax_zisk_bn254
+ * namespace; pull them in via the same header that defines ModArith. */
+#include <evmmax/evmmax.hpp>
+#endif
+
 
 namespace evmmax::bn254
 {
@@ -65,6 +71,15 @@ struct ExtFieldElem
                 reinterpret_cast<const size_t*>(e2.coeffs.data()));
             return res;
         }
+#elif defined(ZISK)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            evmmax_zisk_bn254::syscall_bn254_fp2_addmod(
+                reinterpret_cast<unsigned long long*>(res.coeffs.data()),
+                reinterpret_cast<const unsigned long long*>(e2.coeffs.data()));
+            return res;
+        }
 #endif
 
         auto res = e1.coeffs;
@@ -81,6 +96,15 @@ struct ExtFieldElem
             auto res = e1;
             syscall_bn254_fp2_submod(reinterpret_cast<size_t*>(res.coeffs.data()),
                 reinterpret_cast<const size_t*>(e2.coeffs.data()));
+            return res;
+        }
+#elif defined(ZISK)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            evmmax_zisk_bn254::syscall_bn254_fp2_submod(
+                reinterpret_cast<unsigned long long*>(res.coeffs.data()),
+                reinterpret_cast<const unsigned long long*>(e2.coeffs.data()));
             return res;
         }
 #endif
@@ -101,6 +125,15 @@ struct ExtFieldElem
                 reinterpret_cast<const size_t*>(e.coeffs.data()));
             return res;
         }
+#elif defined(ZISK)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            ExtFieldElem res = {};  // 0
+            evmmax_zisk_bn254::syscall_bn254_fp2_submod(
+                reinterpret_cast<unsigned long long*>(res.coeffs.data()),
+                reinterpret_cast<const unsigned long long*>(e.coeffs.data()));
+            return res;
+        }
 #endif
 
         CoeffArrT ret;
@@ -117,6 +150,15 @@ struct ExtFieldElem
             auto res = e1;
             syscall_bn254_fp2_mulmod(reinterpret_cast<size_t*>(res.coeffs.data()),
                 reinterpret_cast<const size_t*>(e2.coeffs.data()));
+            return res;
+        }
+#elif defined(ZISK)
+        if constexpr (std::is_same_v<ConfigT, bn254::Fq2Config>)
+        {
+            auto res = e1;
+            evmmax_zisk_bn254::syscall_bn254_fp2_mulmod(
+                reinterpret_cast<unsigned long long*>(res.coeffs.data()),
+                reinterpret_cast<const unsigned long long*>(e2.coeffs.data()));
             return res;
         }
 #endif
