@@ -19,6 +19,14 @@
 #include <sp1_syscalls.hpp>
 #endif
 
+#ifdef ZISK
+// Defined in prover/guest_zisk/precompiles/zisk_sha256.cpp. Updates
+// `state[]` in place by issuing the Zisk sha256_f CSR syscall on the
+// 64-byte `block[]`.
+extern "C" void zisk_sha256_compress_block(
+    uint32_t state[8], const uint8_t block[64]) noexcept;
+#endif
+
 
 #if defined(__x86_64__)  // NOLINT(readability-use-concise-preprocessor-directives)
 
@@ -194,6 +202,12 @@ static bool calc_chunk(uint8_t chunk[CHUNK_SIZE], struct BufferState* state)
         syscall_sha256_compress(w, h_sp1);
         for (j = 0; j < 8; j++)
             h[j] = static_cast<uint32_t>(h_sp1[j]);
+#elif defined(ZISK)
+        // Zisk's CSR-based sha256_f syscall does extend+compress in one
+        // step. The wrapper is declared at the top of this file and lives
+        // in prover/guest_zisk/precompiles/zisk_sha256.cpp.
+        zisk_sha256_compress_block(h, chunk);
+        (void)p; (void)i; (void)j;  // unused in this branch
 #else
 
         uint32_t ah[8];
