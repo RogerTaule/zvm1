@@ -64,6 +64,28 @@ void blake2b_compress(
         0x5be0cd19137e2179};
 
     // Cryptographic mixing.
+#ifdef ZISK
+    /* Route each round through the Zisk BLAKE2B_ROUND syscall (0x819), which
+     * executes the eight G() mixings of one round including the sigma message
+     * word permutation. Replaces ~80 64-bit ALU ops per round with one syscall.
+     *
+     * Param ABI (matches ziskos SyscallBlake2bRoundParams):
+     *   { u64 index,  u64* state[16],  const u64* input[16] }
+     *
+     * For r ≥ 10 the syscall takes index = r % 10, matching the existing
+     * sigma[i % std::size(sigma)] selector. EIP-152 allows up to 2³² rounds. */
+    (void)sigma;  // unused in the ZISK path
+    struct Blake2bRoundParams {
+        uint64_t index;
+        uint64_t* state;
+        const uint64_t* input;
+    };
+    for (size_t i = 0; i < rounds; ++i)
+    {
+        Blake2bRoundParams p{static_cast<uint64_t>(i % 10), v, m};
+        __asm__ volatile("csrs 0x819, %0" : : "r"(&p) : "memory");
+    }
+#else
     for (size_t i = 0; i < rounds; ++i)
     {
         // Message word selection permutation for this round.
@@ -78,6 +100,7 @@ void blake2b_compress(
         g(v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
         g(v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
     }
+#endif
 
     for (size_t i = 0; i < 8; ++i)  // XOR the two halves.
         h[i] ^= v[i] ^ v[i + 8];
