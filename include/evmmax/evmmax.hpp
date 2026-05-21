@@ -332,6 +332,43 @@ public:
         assert((mod_ & 1) == 1);
         assert(mod_ >= 3);
 
+#if defined(ZISK)
+        /* Free-input call: ask the prover for x⁻¹ mod P, then verify the hint
+         * with a single modular multiplication (x · x⁻¹ ≡ 1 mod P). In
+         * BN-accelerated mode the syscalls operate on plain modular form
+         * (r_squared_ = 1, mod_inv_ = 0), so the fcall return value is the
+         * answer directly — no Montgomery wrangling needed.
+         *
+         * FCALL_BN254_FP_INV_ID = 6 → csrwi 0x8C0, 6
+         * Replaces the ~600-cycle extended binary Euclidean loop below
+         * with one fcall + one mulmod syscall verify. */
+        if constexpr (BN)
+        {
+            if (!std::is_constant_evaluated() && x != UintT{0})
+            {
+                /* Push x (4 × u64 = 32 bytes; port 0x8F0 + 2 = 0x8F2). */
+                __asm__ volatile("csrs 0x8F2, %0" : : "r"(&x) : "memory");
+                __asm__ volatile("csrwi 0x8C0, 6");
+
+                UintT result;
+                unsigned long long v;
+                __asm__ volatile("csrr %0, 0xFFE" : "=r"(v));  result[0] = v;
+                __asm__ volatile("csrr %0, 0xFFE" : "=r"(v));  result[1] = v;
+                __asm__ volatile("csrr %0, 0xFFE" : "=r"(v));  result[2] = v;
+                __asm__ volatile("csrr %0, 0xFFE" : "=r"(v));  result[3] = v;
+
+                /* Verify x · result ≡ 1 (mod P). The mul itself routes through
+                 * the patched syscall_bn254_fp_mulmod so the check is cheap. */
+                const auto product = mul(x, result);
+                if (product == UintT{1})
+                    return result;
+                /* Hint was wrong (cannot happen with a legitimate prover);
+                 * fall through to the portable binary-Euclidean below so the
+                 * caller still gets a correct answer. */
+            }
+        }
+#endif
+
         // Precompute inverse of 2 modulo mod: inv2 * 2 % mod == 1.
         // The 1/2 is inexact division that can be fixed by adding "0" to the numerator
         // and making it even: (mod + 1) / 2. To avoid potential overflow of (1 + mod)
