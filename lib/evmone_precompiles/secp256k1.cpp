@@ -317,6 +317,118 @@ void sp1_mul(sp1_AffinePoint r, const sp1_AffinePoint p, uint256 c) noexcept
 }  // namespace
 #endif
 
+#ifdef ZISK
+namespace
+{
+// Generator G (re-defined here independently of the SP1 block above, which
+// is only compiled when SP1/SP1TURBO is defined).
+constexpr auto zisk_Gx_val = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798_u256;
+constexpr auto zisk_Gy_val = 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8_u256;
+
+// Mirror of Rust's SyscallPoint256 (in ziskos/.../syscalls/point.rs):
+// 8 u64 limbs total, 4 for x followed by 4 for y, all little-endian.
+struct ZiskPoint256
+{
+    uint64_t x[4];
+    uint64_t y[4];
+};
+
+// Mirror of Rust's SyscallSecp256k1AddParams: { p1: &mut Point, p2: &Point }.
+struct ZiskSecp256k1AddParams
+{
+    ZiskPoint256* p1;
+    const ZiskPoint256* p2;
+};
+
+// Raw syscall wrappers — `csrs <id>, <reg>` is the Zisk syscall convention.
+inline void zisk_syscall_secp256k1_add(ZiskPoint256& p1, const ZiskPoint256& p2) noexcept
+{
+    ZiskSecp256k1AddParams params{&p1, &p2};
+    asm volatile("csrs 0x803, %0" : : "r"(&params) : "memory");
+}
+
+inline void zisk_syscall_secp256k1_dbl(ZiskPoint256& p) noexcept
+{
+    asm volatile("csrs 0x804, %0" : : "r"(&p) : "memory");
+}
+
+// Identity point is encoded as (0, 0).
+inline bool zisk_is_zero(const ZiskPoint256& p) noexcept
+{
+    return (p.x[0] | p.x[1] | p.x[2] | p.x[3] | p.y[0] | p.y[1] | p.y[2] | p.y[3]) == 0;
+}
+
+inline bool zisk_x_eq(const ZiskPoint256& a, const ZiskPoint256& b) noexcept
+{
+    return a.x[0] == b.x[0] && a.x[1] == b.x[1] && a.x[2] == b.x[2] && a.x[3] == b.x[3];
+}
+
+inline bool zisk_y_eq(const ZiskPoint256& a, const ZiskPoint256& b) noexcept
+{
+    return a.y[0] == b.y[0] && a.y[1] == b.y[1] && a.y[2] == b.y[2] && a.y[3] == b.y[3];
+}
+
+// Generator G with little-endian u64 limbs. intx::uint256's limb[0] is the low
+// 64 bits, so the layout matches directly.
+constexpr ZiskPoint256 zisk_G = {
+    {zisk_Gx_val[0], zisk_Gx_val[1], zisk_Gx_val[2], zisk_Gx_val[3]},
+    {zisk_Gy_val[0], zisk_Gy_val[1], zisk_Gy_val[2], zisk_Gy_val[3]},
+};
+
+// Edge-case-safe add: wraps the syscall to handle identity (zero) inputs and
+// the P+P / P+(-P) special cases that the raw syscall doesn't accept.
+// Mirrors the SP1 `sp1_secp256k1_add` wrapper above.
+void zisk_secp256k1_add(ZiskPoint256& r, const ZiskPoint256& p) noexcept
+{
+    if (zisk_is_zero(p)) [[unlikely]]
+        return;
+    if (zisk_is_zero(r)) [[unlikely]]
+    {
+        r = p;
+        return;
+    }
+    if (zisk_x_eq(r, p)) [[unlikely]]
+    {
+        if (zisk_y_eq(r, p))
+            zisk_syscall_secp256k1_dbl(r);  // P + P = [2]P
+        else
+            r = {};  // P + (-P) = 𝒪
+        return;
+    }
+    zisk_syscall_secp256k1_add(r, p);
+}
+
+// Scalar multiplication via double-and-add, mirroring sp1_mul.
+void zisk_mul(ZiskPoint256& result, const ZiskPoint256& p, uint256 c) noexcept
+{
+    result = {};
+    const auto bit_width = sizeof(c) * 8 - intx::clz(c);
+    if (bit_width == 0)
+        return;
+
+    result = p;
+    for (auto i = bit_width - 1; i != 0; --i)
+    {
+        zisk_syscall_secp256k1_dbl(result);
+        if (evmmax::ecc::test_bit(c, i - 1))
+            zisk_syscall_secp256k1_add(result, p);
+    }
+}
+
+// Serialize a ZiskPoint256 to 64 bytes (big-endian, x || y) for hashing into
+// the recovered address.
+void zisk_point_to_bytes(uint8_t out[64], const ZiskPoint256& pt) noexcept
+{
+    uint256 x;
+    x[0] = pt.x[0]; x[1] = pt.x[1]; x[2] = pt.x[2]; x[3] = pt.x[3];
+    uint256 y;
+    y[0] = pt.y[0]; y[1] = pt.y[1]; y[2] = pt.y[2]; y[3] = pt.y[3];
+    intx::be::unsafe::store(&out[0], x);
+    intx::be::unsafe::store(&out[32], y);
+}
+}  // namespace
+#endif
+
 
 std::optional<AffinePoint> secp256k1_ecdsa_recover(std::span<const uint8_t, 32> hash,
     std::span<const uint8_t, 32> r_bytes, std::span<const uint8_t, 32> s_bytes,
@@ -424,6 +536,59 @@ std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
 
     uint8_t serialized[64];
     sp1_point_to_bytes(serialized, sp1_Q);
+    return to_address(serialized);
+#elif defined(ZISK)
+    // Mirrors the SP1 path above but uses Zisk's secp256k1_add (0x803) and
+    // secp256k1_dbl (0x804) CSR syscalls for point arithmetic. The portable
+    // `decompress` is reused for lift_x; a future commit could route it
+    // through the fcall_secp256k1_fp_sqrt fcall.
+
+    // Validate r and s ∈ (0, n).
+    const auto opt_r = Curve::Fr::from_bytes(r_bytes);
+    if (!opt_r.has_value() || *opt_r == 0) [[unlikely]]
+        return std::nullopt;
+    const auto opt_s = Curve::Fr::from_bytes(s_bytes);
+    if (!opt_s.has_value() || *opt_s == 0) [[unlikely]]
+        return std::nullopt;
+    const auto& r_fr = *opt_r;
+    const auto& s_fr = *opt_s;
+
+    // z, u1 = −z·r⁻¹, u2 = s·r⁻¹ (all in Fr).
+    const auto z = Curve::Fr{intx::be::unsafe::load<uint256>(hash.data())};
+    const auto r_inv = 1 / r_fr;
+    const auto u1 = (-z * r_inv).value();
+    const auto u2 = (s_fr * r_inv).value();
+
+    const auto r_val = r_fr.value();
+
+    // Decompress R = (r, y) on the curve using the portable lift_x. Note that
+    // calculate_y() works with Fp values in Montgomery form; we lift r_val to
+    // Fp{r_val} and unwrap the result with .value() to get the standard-form
+    // 256-bit integer that Zisk's syscall expects.
+    const auto r_mont = Curve::Fp{r_val};
+    const auto y_opt = calculate_y(r_mont, parity);
+    if (!y_opt.has_value())
+        return std::nullopt;
+    const auto y_val = (*y_opt).value();
+
+    ZiskPoint256 R{
+        {r_val[0], r_val[1], r_val[2], r_val[3]},
+        {y_val[0], y_val[1], y_val[2], y_val[3]},
+    };
+
+    // Q = [u1]G + [u2]R via Zisk's secp256k1 add/dbl syscalls.
+    ZiskPoint256 T1;
+    zisk_mul(T1, zisk_G, u1);
+    ZiskPoint256 T2;
+    zisk_mul(T2, R, u2);
+    ZiskPoint256 Q = T1;
+    zisk_secp256k1_add(Q, T2);
+
+    if (zisk_is_zero(Q)) [[unlikely]]
+        return std::nullopt;
+
+    uint8_t serialized[64];
+    zisk_point_to_bytes(serialized, Q);
     return to_address(serialized);
 #else
     const auto pubkey = secp256k1_ecdsa_recover(hash, r_bytes, s_bytes, parity);
