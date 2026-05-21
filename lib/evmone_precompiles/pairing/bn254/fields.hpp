@@ -105,6 +105,41 @@ constexpr Fq12 multiply(const Fq12& a, const Fq12& b)
 /// Inverses the Fq^2 field element
 inline Fq2 inverse(const Fq2& f)
 {
+#ifdef ZISK
+    /* Free-input call: ask the prover for f⁻¹ in Fq2, then verify the hint
+     * with one Fq2 multiplication (f · f⁻¹ ≡ 1 in Fq2). Replaces the four
+     * Fp muls + one Fp inv + one Fp neg the portable path below performs.
+     *
+     * FCALL_BN254_FP2_INV_ID = 7  → csrwi 0x8C0, 7
+     * Input is 8 u64s (two Fq coordinates concatenated), output is 8 u64s.
+     * Port 0x8F0 + words_to_port(8) = 0x8F0 + 3 = 0x8F3. */
+    if (!std::is_constant_evaluated())
+    {
+        __asm__ volatile("csrs 0x8F3, %0" : : "r"(f.coeffs.data()) : "memory");
+        __asm__ volatile("csrwi 0x8C0, 7");
+
+        Fq2 result;
+        auto* out = reinterpret_cast<unsigned long long*>(result.coeffs.data());
+        unsigned long long v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[0] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[1] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[2] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[3] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[4] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[5] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[6] = v;
+        __asm__ volatile("csrr %0, 0xFFE" : "=r"(v)); out[7] = v;
+
+        /* Verify: f · result == Fq2::one() (= (1, 0)). The Fq2 mul itself
+         * routes through the patched BN254_COMPLEX_MUL syscall (0x80A). */
+        if ((f * result) == Fq2::one())
+            return result;
+        /* Hint was wrong (cannot happen with a legitimate prover); fall
+         * through to the portable algorithm so the caller still gets a
+         * correct answer. */
+    }
+#endif
+
     const auto& a0 = f.coeffs[0];
     const auto& a1 = f.coeffs[1];
     auto t0 = a0 * a0;
