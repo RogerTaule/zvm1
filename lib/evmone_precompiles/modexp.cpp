@@ -520,6 +520,71 @@ void modexp_even(std::span<uint64_t> r, const std::span<const uint64_t> base, Ex
     add(r, x1);
 }
 
+#if defined(ZISK)
+/// ZISK-native (a·b + 0) mod m via the ARITH256_MOD CSR syscall (0x802).
+/// d ← (result · operand) mod mod, written back in-place to result.
+inline void zisk_mulmod_256(
+    uint256& result, const uint256& operand, const uint256& mod) noexcept
+{
+    static constexpr uint64_t kZero[4] = {0, 0, 0, 0};
+    struct Params
+    {
+        const uint64_t* a;
+        const uint64_t* b;
+        const uint64_t* c;
+        const uint64_t* module_;
+        uint64_t* d;
+    };
+    Params p{
+        reinterpret_cast<const uint64_t*>(&result),
+        reinterpret_cast<const uint64_t*>(&operand),
+        kZero,
+        reinterpret_cast<const uint64_t*>(&mod),
+        reinterpret_cast<uint64_t*>(&result),
+    };
+    __asm__ volatile("csrs 0x802, %0" : : "r"(&p) : "memory");
+}
+
+/// 256-bit modexp via square-and-multiply, mirroring `modexp_sp1` but using
+/// Zisk's ARITH256_MOD syscall instead of SP1's ecall. The dispatcher below
+/// already gates on max(mod, base) ≤ 32 bytes so the uint256 path is safe.
+void modexp_zisk(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp,
+    std::span<const uint8_t> mod_bytes, uint8_t* output) noexcept
+{
+    auto load_u256 = [](std::span<const uint8_t> data) noexcept -> uint256 {
+        uint8_t tmp[32]{};
+        std::ranges::copy(data, &tmp[32 - data.size()]);
+        return intx::be::load<uint256>(tmp);
+    };
+
+    const auto base = load_u256(base_bytes);
+    const auto mod = load_u256(mod_bytes);
+
+    uint256 ret = 0;
+
+    if (mod > 1) [[likely]]
+    {
+        ret = 1;
+        for (const auto e : exp)
+        {
+            for (size_t i = 8; i != 0; --i)
+            {
+                /* square: ret = ret · ret mod mod */
+                zisk_mulmod_256(ret, ret, mod);
+                /* if bit set, multiply by base: ret = ret · base mod mod */
+                if ((e & (1 << (i - 1))) != 0)
+                    zisk_mulmod_256(ret, base, mod);
+            }
+        }
+    }
+
+    uint8_t tmp[32];
+    intx::be::store(tmp, ret);
+    const auto offset = 32 - mod_bytes.size();
+    std::copy_n(&tmp[offset], mod_bytes.size(), output);
+}
+#endif
+
 #if defined(SP1) || defined(SP1TURBO)
 void modexp_sp1(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp,
     std::span<const uint8_t> mod_bytes, uint8_t* output) noexcept
@@ -579,6 +644,12 @@ void modexp(std::span<const uint8_t> base_bytes, std::span<const uint8_t> exp_by
     if (std::max(mod_bytes.size(), base_bytes.size()) <= 32)
     {
         modexp_sp1(base_bytes, exp_bytes, mod_bytes, output);
+        return;
+    }
+#elif defined(ZISK)
+    if (std::max(mod_bytes.size(), base_bytes.size()) <= 32)
+    {
+        modexp_zisk(base_bytes, exp_bytes, mod_bytes, output);
         return;
     }
 #endif
