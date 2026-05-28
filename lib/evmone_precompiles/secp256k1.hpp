@@ -62,6 +62,10 @@ std::optional<AffinePoint> secp256k1_ecdsa_recover(std::span<const uint8_t, 32> 
     std::span<const uint8_t, 32> r_bytes, std::span<const uint8_t, 32> s_bytes,
     bool parity) noexcept;
 
+std::optional<evmc::address> ecrecover_sw(std::span<const uint8_t, 32> hash,
+    std::span<const uint8_t, 32> r_bytes, std::span<const uint8_t, 32> s_bytes,
+    bool parity) noexcept;
+
 std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
     std::span<const uint8_t, 32> r_bytes, std::span<const uint8_t, 32> s_bytes,
     bool parity) noexcept;

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "requests.hpp"
-#include <evmone_precompiles/sha256.hpp>
+#include <evmone/crypto_provider.hpp>
 
 namespace evmone::state
 {
@@ -26,14 +26,14 @@ hash256 calculate_requests_hash(std::span<const Requests> block_requests_list)
             continue;  // Skip empty requests.
 
         hash256 requests_hash;
-        crypto::sha256(reinterpret_cast<std::byte*>(requests_hash.bytes),
-            reinterpret_cast<const std::byte*>(requests.raw_data.data()), requests.raw_data.size());
+        crypto::current_crypto_provider().sha256(
+            requests_hash.bytes, requests.raw_data.data(), requests.raw_data.size());
         requests_hash_list += requests_hash;
     }
 
     hash256 block_requests_hash;
-    crypto::sha256(reinterpret_cast<std::byte*>(block_requests_hash.bytes),
-        reinterpret_cast<const std::byte*>(requests_hash_list.data()), requests_hash_list.size());
+    crypto::current_crypto_provider().sha256(
+        block_requests_hash.bytes, requests_hash_list.data(), requests_hash_list.size());
     return block_requests_hash;
 }
 

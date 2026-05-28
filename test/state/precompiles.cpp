@@ -6,6 +6,7 @@
 #include "../utils/stdx/utility.hpp"
 #include "evmone_precompiles/secp256r1.hpp"
 #include "precompiles_internal.hpp"
+#include <evmone/crypto_provider.hpp>
 #include <evmone_precompiles/blake2b.hpp>
 #include <evmone_precompiles/bls.hpp>
 #include <evmone_precompiles/bn254.hpp>
@@ -20,8 +21,6 @@
 #include <cassert>
 #include <limits>
 #include <span>
-
-#include <zilk_core/core/execution/precompile.hpp>
 
 #ifdef SP1
 #include <sp1_syscalls.hpp>
@@ -386,19 +385,15 @@ ExecutionResult ecrecover_execute(
 ExecutionResult sha256_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    // assert(output_size >= 32);
-    crypto::sha256(reinterpret_cast<std::byte*>(output), reinterpret_cast<const std::byte*>(input),
-        input_size);
+    evmone::crypto::current_crypto_provider().sha256(output, input, input_size);
     return {EVMC_SUCCESS, 32};
 }
 
 ExecutionResult ripemd160_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    // assert(output_size >= 32);
-    output = std::fill_n(output, 12, std::uint8_t{0});
-    crypto::ripemd160(reinterpret_cast<std::byte*>(output),
-        reinterpret_cast<const std::byte*>(input), input_size);
+    std::fill_n(output, 12, std::uint8_t{0});
+    evmone::crypto::current_crypto_provider().ripemd160(output + 12, input, input_size);
     return {EVMC_SUCCESS, 32};
 }
 
@@ -465,7 +460,7 @@ ExecutionResult expmod_execute_evmone(
     if (mod.empty())
         return {EVMC_SUCCESS, output_size};
 
-    crypto::modexp(base, exp, mod, output);
+    evmone::crypto::current_crypto_provider().modexp(base, exp, mod, output);
     return {EVMC_SUCCESS, output_size};
 }
 
@@ -570,32 +565,27 @@ ExecutionResult ecadd_execute(const uint8_t* input, size_t input_size, uint8_t* 
     if (input_size != 0)
         std::memcpy(input_buffer, input, std::min(input_size, std::size(input_buffer)));
 
+#if defined(SP1TURBO) || defined(SP1)
     const auto input_span = std::span{input_buffer};
-
     using namespace evmmax::bn254;
-
     const auto p = AffinePoint::from_bytes(input_span.subspan<0, 64>());
     const auto q = AffinePoint::from_bytes(input_span.subspan<64, 64>());
     if (!p.has_value() || !q.has_value()) [[unlikely]]
         return {EVMC_PRECOMPILE_FAILURE, 0};
     if (!validate(*p) || !validate(*q)) [[unlikely]]
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
-#if defined(SP1TURBO) || defined(SP1)
-    {
-        sp1_AffinePoint sp1_p;
-        sp1_AffinePoint sp1_q;
-        sp1_point_from_bytes(sp1_p, input_buffer);
-        sp1_point_from_bytes(sp1_q, input_buffer + 64);
-        sp1_bn_add(sp1_p, sp1_q);
-        sp1_point_to_bytes(output, sp1_p);
-        return {EVMC_SUCCESS, 64};
-    }
+    sp1_AffinePoint sp1_p;
+    sp1_AffinePoint sp1_q;
+    sp1_point_from_bytes(sp1_p, input_buffer);
+    sp1_point_from_bytes(sp1_q, input_buffer + 64);
+    sp1_bn_add(sp1_p, sp1_q);
+    sp1_point_to_bytes(output, sp1_p);
+    return {EVMC_SUCCESS, 64};
 #else
-    const auto res = evmmax::ecc::add_affine(*p, *q);
-    const std::span<uint8_t, 64> output_span{output, 64};
-    res.to_bytes(output_span);
-    return {EVMC_SUCCESS, output_span.size()};
+    if (!evmone::crypto::current_crypto_provider().bn254_g1_add(
+            output, input_buffer, input_buffer + 64))
+        return {EVMC_PRECOMPILE_FAILURE, 0};
+    return {EVMC_SUCCESS, 64};
 #endif
 }
 
@@ -608,30 +598,24 @@ ExecutionResult ecmul_execute(const uint8_t* input, size_t input_size, uint8_t* 
     if (input_size != 0)
         std::memcpy(input_buffer, input, std::min(input_size, std::size(input_buffer)));
 
+#if defined(SP1TURBO) || defined(SP1)
     const auto input_span = std::span{input_buffer};
-
     using namespace evmmax::bn254;
-
     const auto p = AffinePoint::from_bytes(input_span.subspan<0, 64>());
     if (!p.has_value() || !validate(*p)) [[unlikely]]
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
     const auto c = intx::be::unsafe::load<uint256>(input_buffer + 64);
-
-#if defined(SP1TURBO) || defined(SP1)
-    {
-        sp1_AffinePoint sp1_p;
-        sp1_point_from_bytes(sp1_p, input_buffer);
-        sp1_AffinePoint sp1_r;
-        sp1_bn_mul(sp1_r, sp1_p, c);
-        sp1_point_to_bytes(output, sp1_r);
-        return {EVMC_SUCCESS, 64};
-    }
+    sp1_AffinePoint sp1_p;
+    sp1_point_from_bytes(sp1_p, input_buffer);
+    sp1_AffinePoint sp1_r;
+    sp1_bn_mul(sp1_r, sp1_p, c);
+    sp1_point_to_bytes(output, sp1_r);
+    return {EVMC_SUCCESS, 64};
 #else
-    const auto res = evmmax::bn254::mul(*p, c);
-    const std::span<uint8_t, 64> output_span{output, 64};
-    res.to_bytes(output_span);
-    return {EVMC_SUCCESS, output_span.size()};
+    if (!evmone::crypto::current_crypto_provider().bn254_g1_mul(
+            output, input_buffer, input_buffer + 64))
+        return {EVMC_PRECOMPILE_FAILURE, 0};
+    return {EVMC_SUCCESS, 64};
 #endif
 }
 
@@ -645,29 +629,12 @@ ExecutionResult ecpairing_execute(const uint8_t* input, size_t input_size, uint8
     if (input_size % PAIR_SIZE != 0)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    std::vector<std::pair<evmmax::bn254::Point, evmmax::bn254::ExtPoint>> pairs;
-    pairs.reserve(input_size / PAIR_SIZE);
-    for (auto input_ptr = input; input_ptr != input + input_size; input_ptr += PAIR_SIZE)
-    {
-        const evmmax::bn254::Point p{
-            intx::be::unsafe::load<intx::uint256>(input_ptr),
-            intx::be::unsafe::load<intx::uint256>(input_ptr + 32),
-        };
-        const evmmax::bn254::ExtPoint q{
-            {intx::be::unsafe::load<intx::uint256>(input_ptr + 96),
-                intx::be::unsafe::load<intx::uint256>(input_ptr + 64)},
-            {intx::be::unsafe::load<intx::uint256>(input_ptr + 160),
-                intx::be::unsafe::load<intx::uint256>(input_ptr + 128)},
-        };
-        pairs.emplace_back(p, q);
-    }
-
-    const auto res = evmmax::bn254::pairing_check(pairs);
-    if (!res.has_value())
+    bool verified = false;
+    if (!evmone::crypto::current_crypto_provider().bn254_pairing(
+            verified, input, input_size / PAIR_SIZE))
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
     std::fill_n(output, OUTPUT_SIZE, 0);
-    output[OUTPUT_SIZE - 1] = *res ? 1 : 0;
+    output[OUTPUT_SIZE - 1] = verified ? 1 : 0;
     return {EVMC_SUCCESS, OUTPUT_SIZE};
 }
 
@@ -706,7 +673,7 @@ ExecutionResult blake2bf_execute(const uint8_t* input, [[maybe_unused]] size_t i
     if (f != 0 && f != 1) [[unlikely]]
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    crypto::blake2b_compress(rounds, h, m, t, f != 0);
+    evmone::crypto::current_crypto_provider().blake2f(rounds, h, m, t, f);
     std::memcpy(output, h, sizeof(h));
     return {EVMC_SUCCESS, sizeof(h)};
 }
@@ -718,13 +685,19 @@ ExecutionResult point_evaluation_execute(const uint8_t* input, size_t input_size
     if (input_size != 192)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    const auto r = crypto::kzg_verify_proof(reinterpret_cast<const std::byte*>(&input[0]),
-        reinterpret_cast<const std::byte*>(&input[32]),
-        reinterpret_cast<const std::byte*>(&input[64]),
-        reinterpret_cast<const std::byte*>(&input[96]),
-        reinterpret_cast<const std::byte*>(&input[96 + 48]));
-
-    if (!r)
+    // EIP-4844 precompile input layout (192 bytes):
+    //   [0..32]:    versioned_hash
+    //   [32..64]:   z (field element)
+    //   [64..96]:   y (field element)
+    //   [96..144]:  commitment (48 bytes)
+    //   [144..192]: proof (48 bytes)
+    // The provider enforces both the vh contract (vh == sha256(commitment)|0x01)
+    // and the KZG opening in a single call.
+    bool verified = false;
+    if (!evmone::crypto::current_crypto_provider().kzg_point_eval(
+            verified, &input[0], &input[96], &input[32], &input[64], &input[144]))
+        return {EVMC_PRECOMPILE_FAILURE, 0};
+    if (!verified)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
     // Return FIELD_ELEMENTS_PER_BLOB and BLS_MODULUS as padded 32 byte big endian values
@@ -740,33 +713,20 @@ ExecutionResult bls12_g1add_execute(const uint8_t* input, size_t input_size, uin
     if (input_size != 2 * BLS12_G1_POINT_SIZE)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    // assert(output_size == BLS12_G1_POINT_SIZE);
-
-    if (!crypto::bls::g1_add(output, &output[64], input, &input[64], &input[128], &input[192]))
+    if (!evmone::crypto::current_crypto_provider().bls12_g1_add(output, input, &input[128]))
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
     return {EVMC_SUCCESS, BLS12_G1_POINT_SIZE};
 }
 
 ExecutionResult bls12_g1msm_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    // Checked in `_analyze` function which must be called before.
     assert(input_size % BLS12_G1_MUL_INPUT_SIZE == 0);
     assert(output_size == BLS12_G1_POINT_SIZE);
 
-    if (input_size == BLS12_G1_MUL_INPUT_SIZE)
-    {
-        // Optimize single multiplication case.
-        if (!crypto::bls::g1_mul(output, &output[64], input, &input[64], &input[128]))
-            return {EVMC_PRECOMPILE_FAILURE, 0};
-    }
-    else
-    {
-        if (!crypto::bls::g1_msm(output, &output[64], input, input_size))
-            return {EVMC_PRECOMPILE_FAILURE, 0};
-    }
-
+    if (!evmone::crypto::current_crypto_provider().bls12_g1_msm(
+            output, input, input_size / BLS12_G1_MUL_INPUT_SIZE))
+        return {EVMC_PRECOMPILE_FAILURE, 0};
     return {EVMC_SUCCESS, BLS12_G1_POINT_SIZE};
 }
 
@@ -776,46 +736,36 @@ ExecutionResult bls12_g2add_execute(const uint8_t* input, size_t input_size, uin
     if (input_size != 2 * BLS12_G2_POINT_SIZE)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    // assert(output_size == BLS12_G2_POINT_SIZE);
-
-    if (!crypto::bls::g2_add(output, &output[128], input, &input[128], &input[256], &input[384]))
+    if (!evmone::crypto::current_crypto_provider().bls12_g2_add(output, input, &input[256]))
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
     return {EVMC_SUCCESS, BLS12_G2_POINT_SIZE};
 }
 
 ExecutionResult bls12_g2msm_execute(const uint8_t* input, size_t input_size, uint8_t* output,
     [[maybe_unused]] size_t output_size) noexcept
 {
-    // Checked in `_analyze` function which must be called before.
     assert(input_size % BLS12_G2_MUL_INPUT_SIZE == 0);
     assert(output_size == BLS12_G2_POINT_SIZE);
 
-    if (input_size == BLS12_G2_MUL_INPUT_SIZE)
-    {
-        // Optimize single multiplication case.
-        if (!crypto::bls::g2_mul(output, &output[128], input, &input[128], &input[256]))
-            return {EVMC_PRECOMPILE_FAILURE, 0};
-    }
-    else
-    {
-        if (!crypto::bls::g2_msm(output, &output[128], input, input_size))
-            return {EVMC_PRECOMPILE_FAILURE, 0};
-    }
-
+    if (!evmone::crypto::current_crypto_provider().bls12_g2_msm(
+            output, input, input_size / BLS12_G2_MUL_INPUT_SIZE))
+        return {EVMC_PRECOMPILE_FAILURE, 0};
     return {EVMC_SUCCESS, BLS12_G2_POINT_SIZE};
 }
 
 ExecutionResult bls12_pairing_check_execute(const uint8_t* input, size_t input_size,
     uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
 {
-    // Checked in `_analyze` function which must be called before.
-    assert(input_size % (BLS12_G1_POINT_SIZE + BLS12_G2_POINT_SIZE) == 0);
+    constexpr auto PAIR_SIZE = BLS12_G1_POINT_SIZE + BLS12_G2_POINT_SIZE;
+    assert(input_size % PAIR_SIZE == 0);
     assert(output_size == 32);
 
-    if (!crypto::bls::pairing_check(output, input, input_size))
+    bool verified = false;
+    if (!evmone::crypto::current_crypto_provider().bls12_pairing(
+            verified, input, input_size / PAIR_SIZE))
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
+    std::fill_n(output, 32, 0);
+    output[31] = verified ? 1 : 0;
     return {EVMC_SUCCESS, 32};
 }
 
@@ -825,11 +775,8 @@ ExecutionResult bls12_map_fp_to_g1_execute(const uint8_t* input, size_t input_si
     if (input_size != BLS12_FIELD_ELEMENT_SIZE)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    // assert(output_size == BLS12_G1_POINT_SIZE);
-
-    if (!crypto::bls::map_fp_to_g1(output, &output[64], input))
+    if (!evmone::crypto::current_crypto_provider().bls12_map_fp_to_g1(output, input))
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
     return {EVMC_SUCCESS, BLS12_G1_POINT_SIZE};
 }
 
@@ -839,11 +786,8 @@ ExecutionResult bls12_map_fp2_to_g2_execute(const uint8_t* input, size_t input_s
     if (input_size != 2 * BLS12_FIELD_ELEMENT_SIZE)
         return {EVMC_PRECOMPILE_FAILURE, 0};
 
-    // assert(output_size == BLS12_G2_POINT_SIZE);
-
-    if (!crypto::bls::map_fp2_to_g2(output, &output[128], input))
+    if (!evmone::crypto::current_crypto_provider().bls12_map_fp2_to_g2(output, input))
         return {EVMC_PRECOMPILE_FAILURE, 0};
-
     return {EVMC_SUCCESS, BLS12_G2_POINT_SIZE};
 }
 
@@ -855,28 +799,18 @@ ExecutionResult p256verify_execute(const uint8_t* input, size_t input_size, uint
     if (input_size != 160)
         return {EVMC_SUCCESS, 0};
 
-    ethash::hash256 h{};
-    std::copy_n(input, sizeof(h), h.bytes);
-    const auto r = intx::be::unsafe::load<intx::uint256>(input + 32);
-    const auto s = intx::be::unsafe::load<intx::uint256>(input + 64);
-    const auto qx = intx::be::unsafe::load<intx::uint256>(input + 96);
-    const auto qy = intx::be::unsafe::load<intx::uint256>(input + 128);
-
-    if (!evmmax::secp256r1::verify(h, r, s, qx, qy))
-        return {EVMC_SUCCESS, 0};  // In case of invalid signature, return empty output.
+    // Layout: msg(32) || sig r||s (64) || pubkey x||y (64).
+    bool verified = false;
+    if (!evmone::crypto::current_crypto_provider().secp256r1_verify(
+            verified, input, input + 32, input + 96))
+        return {EVMC_SUCCESS, 0};
+    if (!verified)
+        return {EVMC_SUCCESS, 0};
 
     // Return 1_u256.
     std::fill_n(output, 31, 0);
     output[31] = 1;
     return {EVMC_SUCCESS, 32};
-}
-
-static ExecutionResult silkworm_ecrecover_execute(const uint8_t* input, size_t input_size,
-    uint8_t* output, [[maybe_unused]] size_t output_size) noexcept
-{
-    auto res = silkworm::precompile::ecrec_run({input, input_size});
-    std::memcpy(output, res->data(), res->size());
-    return {EVMC_SUCCESS, res->size()};
 }
 
 namespace
@@ -892,7 +826,7 @@ struct PrecompileTraits
 };
 
 inline constexpr std::array<PrecompileTraits, 18> traits{{
-    {0x0001, EVMC_FRONTIER, ecrecover_analyze, silkworm_ecrecover_execute},
+    {0x0001, EVMC_FRONTIER, ecrecover_analyze, ecrecover_execute},
     {0x0002, EVMC_FRONTIER, sha256_analyze, sha256_execute},
     {0x0003, EVMC_FRONTIER, ripemd160_analyze, ripemd160_execute},
     {0x0004, EVMC_FRONTIER, identity_analyze, identity_execute},

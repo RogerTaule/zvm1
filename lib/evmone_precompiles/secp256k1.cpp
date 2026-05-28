@@ -4,6 +4,9 @@
 #include "secp256k1.hpp"
 #include "keccak.hpp"
 
+#include <evmone/crypto_provider.hpp>
+#include <cstring>
+
 #if defined(SP1TURBO) || defined(SP1)
 #include <sp1_syscalls.hpp>
 #endif
@@ -632,7 +635,7 @@ std::optional<AffinePoint> secp256k1_ecdsa_recover(std::span<const uint8_t, 32> 
     return to_affine(Q);
 }
 
-std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
+std::optional<evmc::address> ecrecover_sw(std::span<const uint8_t, 32> hash,
     std::span<const uint8_t, 32> r_bytes, std::span<const uint8_t, 32> s_bytes,
     bool parity) noexcept
 {
@@ -751,6 +754,22 @@ std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
 
     return to_address(*pubkey);
 #endif
+}
+
+std::optional<evmc::address> ecrecover(std::span<const uint8_t, 32> hash,
+    std::span<const uint8_t, 32> r_bytes, std::span<const uint8_t, 32> s_bytes,
+    bool parity) noexcept
+{
+    uint8_t sig[64];
+    std::copy_n(r_bytes.data(), 32, sig);
+    std::copy_n(s_bytes.data(), 32, sig + 32);
+    uint8_t addr[20];
+    if (!evmone::crypto::current_crypto_provider().ecrecover(
+            addr, hash.data(), sig, parity ? 1 : 0))
+        return std::nullopt;
+    evmc::address out;
+    std::memcpy(out.bytes, addr, 20);
+    return out;
 }
 
 std::optional<Curve::Fp> field_sqrt(const Curve::Fp& x) noexcept
